@@ -11,29 +11,40 @@ export default function Home() {
   useEffect(() => {
     let mounted = true;
     const bootstrap = async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const user = sessionData.session?.user;
-      if (!mounted) return;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const user = sessionData.session?.user;
+        if (!mounted) return;
 
-      if (!user) {
-        router.replace("/login");
-        return;
+        if (!user) {
+          router.replace("/login");
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("role, approval_status, requested_role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (!mounted) return;
+        if (profileError) {
+          router.replace("/login");
+          return;
+        }
+
+        router.replace(
+          getLandingPathForProfile({
+            role: profile?.role ?? "student",
+            approval_status: profile?.approval_status ?? "approved",
+            requested_role: profile?.requested_role ?? null,
+          })
+        );
+      } catch {
+        if (mounted) {
+          router.replace("/login");
+        }
       }
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role, approval_status, requested_role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (!mounted) return;
-      router.replace(
-        getLandingPathForProfile({
-          role: profile?.role ?? "student",
-          approval_status: profile?.approval_status ?? "approved",
-          requested_role: profile?.requested_role ?? null,
-        })
-      );
     };
 
     void bootstrap();
