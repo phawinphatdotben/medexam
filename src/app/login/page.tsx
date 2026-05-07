@@ -98,8 +98,22 @@ export default function AuthPage() {
           }
         }
       }
-    } catch (err: any) {
-      setError(err.message || "Authentication failed. Please try again.");
+    } catch (err: unknown) {
+      const raw =
+        err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string"
+          ? (err as { message: string }).message
+          : "Authentication failed. Please try again.";
+      if (
+        raw.includes("Failed to execute 'fetch'") ||
+        raw.includes("Invalid value") ||
+        raw.includes("NEXT_PUBLIC_SUPABASE")
+      ) {
+        setError(
+          "App cannot reach Supabase. In Vercel → your project → Settings → Environment Variables, set NEXT_PUBLIC_SUPABASE_URL (https://….supabase.co) and NEXT_PUBLIC_SUPABASE_ANON_KEY, save, then Redeploy. No quotes around values."
+        );
+      } else {
+        setError(raw);
+      }
     } finally {
       setLoading(false);
     }

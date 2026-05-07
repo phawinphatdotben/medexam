@@ -11,6 +11,16 @@ function getSupabase(): SupabaseClient {
       "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY. Add them under Vercel → Project Settings → Environment Variables (then redeploy)."
     );
   }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("bad protocol");
+    }
+  } catch {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL must be a full URL like https://YOUR_PROJECT_REF.supabase.co (include https://)."
+    );
+  }
   singleton = createClient(url, key);
   return singleton;
 }
