@@ -7,6 +7,7 @@ interface ResponseRow {
   id: string;
   user_id: string;
   meq_stage_id: string;
+  meq_test_id: string;
   answer_text: string | null;
   status: string;
   human_override_score?: number | null;
@@ -36,7 +37,10 @@ export default function GradingDashboard() {
   const [authChecking, setAuthChecking] = useState(true);
   const [graderId, setGraderId] = useState<string | null>(null);
   const [graderRole, setGraderRole] = useState<string | null>(null);
+  const [subAdminCourseScopes, setSubAdminCourseScopes] = useState<string[]>([]);
   const [trainingBanner, setTrainingBanner] = useState<string | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<string>("");
+  const [selectedStage, setSelectedStage] = useState<string>("");
 
   const router = useRouter();
 
@@ -67,6 +71,16 @@ export default function GradingDashboard() {
       }
       setGraderId(user.id);
       setGraderRole(profile.role);
+      if (profile.role === "sub_admin") {
+        const { data: scopes } = await supabase
+          .from("sub_admin_course_scopes")
+          .select("course_code")
+          .eq("profile_id", user.id);
+        const scopeCodes = ((scopes as { course_code: string }[] | null) || []).map((s) => s.course_code);
+        setSubAdminCourseScopes(scopeCodes);
+      } else {
+        setSubAdminCourseScopes([]);
+      }
       setAuthChecking(false);
     }
     void secureAccess();
@@ -126,12 +140,18 @@ export default function GradingDashboard() {
     const visible =
       graderRole === "educator"
         ? raw.filter((r) => r.meq_test_stages.meq_tests.created_by === graderId)
+        : graderRole === "sub_admin"
+          ? raw.filter((r) => {
+              const code = r.meq_test_stages.meq_tests.course_code;
+              return !!code && subAdminCourseScopes.includes(code);
+            })
         : raw;
     setResponses(
       visible.map((r) => ({
         id: r.id,
         user_id: r.user_id,
         meq_stage_id: r.meq_stage_id,
+        meq_test_id: r.meq_test_stages.meq_test_id,
         answer_text: r.answer_text,
         status: r.status,
         human_override_score: r.human_override_score,
@@ -147,11 +167,19 @@ export default function GradingDashboard() {
       }))
     );
     setLoading(false);
-  }, [authChecking, graderId, graderRole]);
+  }, [authChecking, graderId, graderRole, subAdminCourseScopes]);
 
   useEffect(() => {
     void loadResponses();
   }, [loadResponses]);
+
+  useEffect(() => {
+    const availableCourses = Array.from(new Set(responses.map((r) => r.course_code).filter(Boolean))) as string[];
+    if (!selectedCourse || !availableCourses.includes(selectedCourse)) {
+      setSelectedCourse(availableCourses[0] || "");
+      setSelectedStage("");
+    }
+  }, [responses, selectedCourse]);
 
   const handleInputChange = (
     responseId: string,
@@ -310,6 +338,26 @@ export default function GradingDashboard() {
     );
   }
 
+  const departmentOptions = Array.from(new Set(responses.map((r) => r.course_code).filter(Boolean))) as string[];
+  const departmentScopedResponses = selectedCourse
+    ? responses.filter((r) => r.course_code === selectedCourse)
+    : [];
+  const questionOptions = Array.from(
+    new Map(
+      departmentScopedResponses.map((r) => [
+        r.meq_stage_id,
+        {
+          stageId: r.meq_stage_id,
+          label: `${r.test_label} · Stage ${r.stage_order}`,
+          questionText: r.question_text ?? "",
+        },
+      ])
+    ).values()
+  );
+  const visibleResponses = selectedStage
+    ? departmentScopedResponses.filter((r) => r.meq_stage_id === selectedStage)
+    : [];
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 shadow-sm px-8 py-6">
@@ -331,7 +379,60 @@ export default function GradingDashboard() {
           <div className="text-gray-500 text-center py-16 text-xl font-medium">No MEQ stage submissions found</div>
         ) : (
           <div className="space-y-8 mt-2 mb-10">
-            {responses.map((response) => {
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-4">
+              <h2 className="text-lg font-semibold text-gray-900">Start grading</h2>
+              <p className="text-sm text-gray-600">
+                Select a department and assigned question before grading. Only questions within your grading scope are listed.
+              </p>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Department</label>
+                  <select
+                    value={selectedCourse}
+                    onChange={(e) => {
+                      setSelectedCourse(e.target.value);
+                      setSelectedStage("");
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2 bg-white"
+                  >
+                    <option value="">Select department…</option>
+                    {departmentOptions.map((code) => (
+                      <option key={code} value={code}>
+                        {code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Question</label>
+                  <select
+                    value={selectedStage}
+                    disabled={!selectedCourse}
+                    onChange={(e) => setSelectedStage(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-2 bg-white disabled:bg-gray-100"
+                  >
+                    <option value="">Select question…</option>
+                    {questionOptions.map((option) => (
+                      <option key={option.stageId} value={option.stageId}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {selectedStage ? (
+                <div className="text-sm text-gray-700 bg-white border border-gray-200 rounded p-3 whitespace-pre-wrap">
+                  <span className="font-semibold">Question prompt:</span>{" "}
+                  {questionOptions.find((q) => q.stageId === selectedStage)?.questionText || "-"}
+                </div>
+              ) : null}
+            </div>
+            {!selectedCourse || !selectedStage ? (
+              <div className="text-center text-gray-500 border border-dashed border-gray-300 rounded-lg py-10">
+                Choose department and question to start grading.
+              </div>
+            ) : null}
+            {visibleResponses.map((response) => {
               const input = gradeInputs[response.id] || {
                 score:
                   response.human_override_score != null
@@ -366,7 +467,7 @@ export default function GradingDashboard() {
                   </div>
                   <div className="mb-4">
                     <label className="block text-sm font-bold text-gray-700 mb-1">Student answer</label>
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-md px-4 py-3 text-base text-gray-800 font-mono shadow-inner whitespace-pre-wrap">
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-md px-4 py-3 text-base text-gray-800 font-mono shadow-inner whitespace-pre-wrap break-words">
                       {response.answer_text || (
                         <span className="italic text-gray-400">(No answer provided)</span>
                       )}
