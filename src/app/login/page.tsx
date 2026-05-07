@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth, type AuthProfile } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { getLandingPathForProfile } from "@/lib/role-routing";
 
@@ -17,30 +18,21 @@ export default function AuthPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const router = useRouter();
+  const { user, profile, loading: authLoading, refresh } = useAuth();
 
-  const routeByRole = useCallback(async (userId: string) => {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role, approval_status, requested_role")
-      .eq("id", userId)
-      .maybeSingle();
-    const next = getLandingPathForProfile({
-      role: profile?.role ?? "student",
-      approval_status: profile?.approval_status ?? "approved",
-      requested_role: profile?.requested_role ?? null,
-    });
-    router.replace(next);
-  }, [router]);
+  const routeFromProfile = useCallback(
+    (p: AuthProfile) => {
+      router.replace(getLandingPathForProfile(p));
+    },
+    [router],
+  );
 
   useEffect(() => {
-    const checkExistingSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      const user = data.session?.user;
-      if (!user) return;
-      await routeByRole(user.id);
-    };
-    void checkExistingSession();
-  }, [routeByRole]);
+    if (authLoading) return;
+    if (user && profile) {
+      routeFromProfile(profile);
+    }
+  }, [authLoading, user, profile, routeFromProfile]);
 
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault();
@@ -56,7 +48,12 @@ export default function AuthPage() {
         });
         if (error) throw error;
         if (data.user) {
-          await routeByRole(data.user.id);
+          const fresh = await refresh();
+          if (fresh) {
+            routeFromProfile(fresh);
+          } else {
+            router.replace("/login");
+          }
         } else {
           router.replace("/subjects");
         }
@@ -94,7 +91,10 @@ export default function AuthPage() {
             setConfirmPassword("");
             setNotice("Staff registration submitted. Please wait for administration approval.");
           } else {
-            await routeByRole(data.user.id);
+            const fresh = await refresh();
+            if (fresh) {
+              routeFromProfile(fresh);
+            }
           }
         }
       }

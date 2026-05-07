@@ -2,56 +2,29 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { getLandingPathForProfile } from "@/lib/role-routing";
 
 export default function Home() {
   const router = useRouter();
+  const { user, profile, loading } = useAuth();
 
   useEffect(() => {
-    let mounted = true;
-    const bootstrap = async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const user = sessionData.session?.user;
-        if (!mounted) return;
-
-        if (!user) {
-          router.replace("/login");
-          return;
-        }
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("role, approval_status, requested_role")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (!mounted) return;
-        if (profileError) {
-          router.replace("/login");
-          return;
-        }
-
-        router.replace(
-          getLandingPathForProfile({
-            role: profile?.role ?? "student",
-            approval_status: profile?.approval_status ?? "approved",
-            requested_role: profile?.requested_role ?? null,
-          })
-        );
-      } catch {
-        if (mounted) {
-          router.replace("/login");
-        }
+    if (loading) return;
+    try {
+      if (!user) {
+        router.replace("/login");
+        return;
       }
-    };
-
-    void bootstrap();
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
+      if (!profile) {
+        router.replace("/login");
+        return;
+      }
+      router.replace(getLandingPathForProfile(profile));
+    } catch {
+      router.replace("/login");
+    }
+  }, [loading, user, profile, router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">

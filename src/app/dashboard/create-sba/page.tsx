@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
+import { getAuthUserId } from "@/lib/auth/session";
+import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS, type SubjectName } from "@/lib/subjects";
 
 type OptionRow = { id: string; text: string };
@@ -29,7 +32,11 @@ const emptyQuestion = (): QuestionDraft => ({
 
 export default function CreateSbaTestPage() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const { ready: accessOk, loading: gateLoading } = useRoleGate(STAFF_DASHBOARD_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/practice-tests",
+  });
+  const [depsReady, setDepsReady] = useState(false);
   const [subject, setSubject] = useState<SubjectName>(SUBJECTS[0]!);
   const [subjectCode, setSubjectCode] = useState("");
   const [subjectCodeSearch, setSubjectCodeSearch] = useState("");
@@ -45,25 +52,12 @@ export default function CreateSbaTestPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data: s } = await supabase.auth.getSession();
-    if (!s.session?.user) {
-      router.replace("/login");
-      return;
-    }
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", s.session.user.id)
-      .maybeSingle();
-    if (!profile?.role || !["educator", "admin", "sub_admin"].includes(profile.role)) {
-      router.replace("/exam");
-      return;
-    }
+    if (!accessOk || gateLoading) return;
     const { data: deps } = await supabase.from("departments").select("id, name").order("name");
     setDepartments(deps || []);
     if (deps?.[0]) setDepartmentId(deps[0].id);
-    setReady(true);
-  }, [router]);
+    setDepsReady(true);
+  }, [accessOk, gateLoading]);
 
   useEffect(() => {
     load();
@@ -166,9 +160,8 @@ export default function CreateSbaTestPage() {
     }
 
     setSaving(true);
-    const { data: userRes } = await supabase.auth.getUser();
-    const user = userRes.user;
-    if (!user) {
+    const userIdSubmit = await getAuthUserId();
+    if (!userIdSubmit) {
       setSaving(false);
       setError("Not signed in.");
       return;
@@ -182,7 +175,7 @@ export default function CreateSbaTestPage() {
         test_function: testFunction,
         department_id: departmentId || null,
         test_year: testYear,
-        created_by: user.id,
+        created_by: userIdSubmit,
         review_status: "pending_committee",
       })
       .select("id")
@@ -220,7 +213,7 @@ export default function CreateSbaTestPage() {
     router.push("/dashboard/my-tests");
   };
 
-  if (!ready) {
+  if (!accessOk || gateLoading || !depsReady) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <span className="text-gray-600">Loading...</span>
@@ -237,10 +230,22 @@ export default function CreateSbaTestPage() {
           </Link>
         </div>
         <h1 className="text-3xl font-bold text-teal-800 mb-1">Create SBA test</h1>
-        <p className="text-gray-600 text-sm mb-8">
+        <p className="text-gray-600 text-sm mb-4">
           Each question gets a new UUID in the database. Committee status starts as &quot;pending
           committee&quot;.
         </p>
+        <div className="rounded-lg border border-teal-200 bg-teal-50/90 px-4 py-3 text-sm text-teal-950 mb-8 space-y-2">
+          <p>
+            <span className="font-semibold">Pool & committee:</span> Staff-authored tests stay in the pool until
+            approved. Students never see unapproved content.
+          </p>
+          <p>
+            <span className="font-semibold">Real vs practice:</span> After approval, practice tests are open to all
+            students for self-study. Real tests are delivered only through{" "}
+            <strong>Test assignments</strong> (admin / sub-admin) into each student&apos;s{" "}
+            <strong>Test session</strong>.
+          </p>
+        </div>
 
         <form onSubmit={onSubmit} className="space-y-8">
           <section className="border border-gray-200 rounded-lg p-6 space-y-4">

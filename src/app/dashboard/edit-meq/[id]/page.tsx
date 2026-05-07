@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
+import { getSessionUserId } from "@/lib/auth/session";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 type StageRow = {
   id: string;
@@ -16,6 +19,10 @@ type StageRow = {
 export default function EditMeqRubricPage() {
   const { id: testId } = useParams<{ id: string }>();
   const router = useRouter();
+  const { ready: accessOk, loading: gateLoading, role: staffRole } = useRoleGate(STAFF_DASHBOARD_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/practice-tests",
+  });
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,25 +35,16 @@ export default function EditMeqRubricPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!accessOk || gateLoading || !staffRole) return;
     setLoading(true);
     setError(null);
-    const { data: s } = await supabase.auth.getSession();
-    if (!s.session?.user) {
+    const uid = await getSessionUserId();
+    if (!uid) {
       router.replace("/login");
       return;
     }
-    setUserId(s.session.user.id);
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", s.session.user.id)
-      .maybeSingle();
-    const role = profile?.role;
-    if (!role || !["educator", "admin", "sub_admin"].includes(role)) {
-      router.replace("/exam");
-      return;
-    }
-    const admin = role === "admin";
+    setUserId(uid);
+    const admin = staffRole === "admin";
 
     const { data: test, error: te } = await supabase
       .from("meq_tests")
@@ -61,7 +59,7 @@ export default function EditMeqRubricPage() {
       return;
     }
 
-    if (!admin && test.created_by !== s.session.user.id) {
+    if (!admin && test.created_by !== uid) {
       router.replace("/dashboard/my-tests");
       return;
     }
@@ -94,7 +92,7 @@ export default function EditMeqRubricPage() {
     setDrafts(d);
     setLoading(false);
     setReady(true);
-  }, [testId, router]);
+  }, [testId, router, accessOk, gateLoading, staffRole]);
 
   useEffect(() => {
     void load();

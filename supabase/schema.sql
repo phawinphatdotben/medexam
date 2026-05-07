@@ -184,6 +184,64 @@ create table if not exists public.sba_question_responses (
   unique (user_id, sba_test_question_id)
 );
 
+-- Staff test bundles + seasonal assignments (see migration 020 for full RLS replication)
+create table if not exists public.staff_test_groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.staff_test_group_items (
+  id uuid primary key default gen_random_uuid(),
+  test_group_id uuid not null references public.staff_test_groups (id) on delete cascade,
+  meq_test_id uuid references public.meq_tests (id) on delete cascade,
+  sba_test_id uuid references public.sba_tests (id) on delete cascade,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  constraint staff_test_group_items_one_kind check (
+    (meq_test_id is not null)::int + (sba_test_id is not null)::int = 1
+  )
+);
+
+create table if not exists public.staff_student_groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.staff_student_group_members (
+  student_group_id uuid not null references public.staff_student_groups (id) on delete cascade,
+  student_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (student_group_id, student_id)
+);
+
+create table if not exists public.staff_test_assignments (
+  id uuid primary key default gen_random_uuid(),
+  test_group_id uuid not null references public.staff_test_groups (id) on delete cascade,
+  title text not null default 'Assignment',
+  window_start timestamptz,
+  window_end timestamptz,
+  created_by uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint staff_test_assignments_window_ok check (
+    window_start is null
+    or window_end is null
+    or window_end >= window_start
+  )
+);
+
+create table if not exists public.staff_test_assignment_recipients (
+  assignment_id uuid not null references public.staff_test_assignments (id) on delete cascade,
+  student_id uuid references public.profiles (id) on delete cascade,
+  student_group_id uuid references public.staff_student_groups (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint staff_test_assignment_recipients_one_target check (
+    (student_id is not null)::int + (student_group_id is not null)::int = 1
+  )
+);
+
 -- ---------------------------------------------------------------------------
 -- Triggers: updated_at
 -- ---------------------------------------------------------------------------
@@ -333,6 +391,78 @@ $$;
 
 grant execute on function public.current_user_role() to authenticated, service_role;
 
+-- Student visibility for approved tests (practice freely; real tests via assignment windows).
+create or replace function public.student_can_access_meq_test(p_meq_test_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.meq_tests t
+    where t.id = p_meq_test_id
+      and t.review_status = 'approved'
+      and (
+        t.test_function = 'practice'
+        or exists (
+          select 1
+          from public.staff_test_group_items i
+          join public.staff_test_assignments a on a.test_group_id = i.test_group_id
+          join public.staff_test_assignment_recipients r on r.assignment_id = a.id
+          where i.meq_test_id = t.id
+            and (a.window_start is null or a.window_start <= now())
+            and (a.window_end is null or a.window_end >= now())
+            and (
+              r.student_id = auth.uid()
+              or exists (
+                select 1 from public.staff_student_group_members m
+                where m.student_group_id = r.student_group_id
+                  and m.student_id = auth.uid()
+              )
+            )
+        )
+      )
+  );
+$$;
+
+create or replace function public.student_can_access_sba_test(p_sba_test_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.sba_tests t
+    where t.id = p_sba_test_id
+      and t.review_status = 'approved'
+      and (
+        t.test_function = 'practice'
+        or exists (
+          select 1
+          from public.staff_test_group_items i
+          join public.staff_test_assignments a on a.test_group_id = i.test_group_id
+          join public.staff_test_assignment_recipients r on r.assignment_id = a.id
+          where i.sba_test_id = t.id
+            and (a.window_start is null or a.window_start <= now())
+            and (a.window_end is null or a.window_end >= now())
+            and (
+              r.student_id = auth.uid()
+              or exists (
+                select 1 from public.staff_student_group_members m
+                where m.student_group_id = r.student_group_id
+                  and m.student_id = auth.uid()
+              )
+            )
+        )
+      )
+  );
+$$;
+
+grant execute on function public.student_can_access_meq_test(uuid) to authenticated, service_role;
+grant execute on function public.student_can_access_sba_test(uuid) to authenticated, service_role;
+
 -- ---------------------------------------------------------------------------
 -- Profiles
 -- ---------------------------------------------------------------------------
@@ -364,13 +494,18 @@ using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.rol
 with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
 -- ---------------------------------------------------------------------------
--- MEQ tests: staff CRUD; students read approved; sub_admin scope; admin all
+-- MEQ tests: staff CRUD; students = approved practice OR assigned real tests
 -- ---------------------------------------------------------------------------
 drop policy if exists "meq_tests_select" on public.meq_tests;
 create policy "meq_tests_select" on public.meq_tests for select
 using (
-  (review_status = 'approved' and auth.role() = 'authenticated')
-  or (created_by = auth.uid())
+  (
+    exists (
+      select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'student'
+    )
+    and public.student_can_access_meq_test(meq_tests.id)
+  )
+  or (meq_tests.created_by = auth.uid())
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'sub_admin')
     and exists (
@@ -381,7 +516,7 @@ using (
         and (c.test_year is null or c.test_year = meq_tests.test_year)
     ))
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'educator')
-    and (created_by = auth.uid() or review_status = 'approved'))
+    and (meq_tests.created_by = auth.uid() or meq_tests.review_status = 'approved'))
 );
 
 drop policy if exists "meq_tests_insert" on public.meq_tests;
@@ -413,7 +548,10 @@ drop policy if exists "meq_test_stages_select" on public.meq_test_stages;
 create policy "meq_test_stages_select" on public.meq_test_stages for select
 using (exists (select 1 from public.meq_tests t where t.id = meq_test_stages.meq_test_id
   and (
-    (t.review_status = 'approved' and auth.role() = 'authenticated')
+    (
+      exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'student')
+      and public.student_can_access_meq_test(t.id)
+    )
     or (t.created_by = auth.uid())
     or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
     or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'sub_admin')
@@ -439,8 +577,13 @@ with check (exists (select 1 from public.meq_tests t
 drop policy if exists "sba_tests_select" on public.sba_tests;
 create policy "sba_tests_select" on public.sba_tests for select
 using (
-  (review_status = 'approved' and auth.role() = 'authenticated')
-  or (created_by = auth.uid())
+  (
+    exists (
+      select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'student'
+    )
+    and public.student_can_access_sba_test(sba_tests.id)
+  )
+  or (sba_tests.created_by = auth.uid())
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'sub_admin')
     and exists (
@@ -450,7 +593,7 @@ using (
         and (c.test_year is null or c.test_year = sba_tests.test_year)
     ))
   or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'educator')
-    and (created_by = auth.uid() or review_status = 'approved'))
+    and (sba_tests.created_by = auth.uid() or sba_tests.review_status = 'approved'))
 );
 
 drop policy if exists "sba_tests_insert" on public.sba_tests;
@@ -476,7 +619,10 @@ drop policy if exists "sba_test_questions_select" on public.sba_test_questions;
 create policy "sba_test_questions_select" on public.sba_test_questions for select
 using (exists (select 1 from public.sba_tests t where t.id = sba_test_questions.sba_test_id
   and (
-    (t.review_status = 'approved' and auth.role() = 'authenticated')
+    (
+      exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'student')
+      and public.student_can_access_sba_test(t.id)
+    )
     or (t.created_by = auth.uid())
     or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
     or (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role::text = 'sub_admin')
@@ -535,6 +681,13 @@ create policy "meq_stage_responses_insert" on public.meq_stage_responses for ins
 with check (
   auth.uid() = user_id
   and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'student')
+  and exists (
+    select 1
+    from public.meq_test_stages s
+    join public.meq_tests t on t.id = s.meq_test_id
+    where s.id = meq_stage_responses.meq_stage_id
+      and public.student_can_access_meq_test(t.id)
+  )
 );
 
 drop policy if exists "meq_stage_responses_update" on public.meq_stage_responses;
@@ -561,8 +714,17 @@ using (auth.uid() = user_id or
 
 drop policy if exists "sba_qr_insert" on public.sba_question_responses;
 create policy "sba_qr_insert" on public.sba_question_responses for insert
-with check (auth.uid() = user_id
-  and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'student'));
+with check (
+  auth.uid() = user_id
+  and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'student')
+  and exists (
+    select 1
+    from public.sba_test_questions q
+    join public.sba_tests t on t.id = q.sba_test_id
+    where q.id = sba_question_responses.sba_test_question_id
+      and public.student_can_access_sba_test(t.id)
+  )
+);
 
 drop policy if exists "sba_qr_update" on public.sba_question_responses;
 create policy "sba_qr_update" on public.sba_question_responses for update
@@ -573,8 +735,7 @@ create policy "sba_qr_delete_own" on public.sba_question_responses for delete
 using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
--- Helper function: grouped approved tests by subject
--- Students can see approved tests without per-student assignment.
+-- Helper: grouped approved tests (students: practice only via role filter inside)
 -- ---------------------------------------------------------------------------
 create or replace function public.get_grouped_approved_tests(p_subject text default null)
 returns table (
@@ -590,11 +751,15 @@ as $$
       'MEQ'::text as test_type,
       t.id,
       t.subject,
-      t.subject_code,
+      t.course_code as subject_code,
       t.test_year,
       t.created_at
     from public.meq_tests t
     where t.review_status = 'approved'
+      and (
+        public.current_user_role() is distinct from 'student'::text
+        or t.test_function = 'practice'
+      )
     union all
     select
       'SBA'::text as test_type,
@@ -605,6 +770,10 @@ as $$
       t.created_at
     from public.sba_tests t
     where t.review_status = 'approved'
+      and (
+        public.current_user_role() is distinct from 'student'::text
+        or t.test_function = 'practice'
+      )
   ),
   filtered as (
     select *

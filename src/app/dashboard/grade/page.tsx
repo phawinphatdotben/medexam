@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { GRADING_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 interface ResponseRow {
   id: string;
@@ -30,64 +31,48 @@ interface GradeInputState {
 }
 
 export default function GradingDashboard() {
+  const { ready: accessOk, loading: gateLoading, userId: graderId, role: graderRole } = useRoleGate(
+    GRADING_ROLES,
+    { noUserRedirect: "/login", wrongRoleRedirect: "/practice-tests" },
+  );
+  const [subAdminCourseScopes, setSubAdminCourseScopes] = useState<string[]>([]);
+  const [scopesLoading, setScopesLoading] = useState(false);
+
   const [responses, setResponses] = useState<ResponseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gradeInputs, setGradeInputs] = useState<{ [key: string]: GradeInputState }>({});
-  const [authChecking, setAuthChecking] = useState(true);
-  const [graderId, setGraderId] = useState<string | null>(null);
-  const [graderRole, setGraderRole] = useState<string | null>(null);
-  const [subAdminCourseScopes, setSubAdminCourseScopes] = useState<string[]>([]);
   const [trainingBanner, setTrainingBanner] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<string>("");
   const [selectedStage, setSelectedStage] = useState<string>("");
 
-  const router = useRouter();
-
   useEffect(() => {
-    let mounted = true;
-    async function secureAccess() {
-      setAuthChecking(true);
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (!mounted) return;
-      const user = userData.user;
-      if (!user) {
-        router.push("/exam");
-        return;
-      }
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (
-        profileError ||
-        !profile ||
-        !profile.role ||
-        !["admin", "educator", "sub_admin"].includes(profile.role)
-      ) {
-        router.push("/exam");
-        return;
-      }
-      setGraderId(user.id);
-      setGraderRole(profile.role);
-      if (profile.role === "sub_admin") {
-        const { data: scopes } = await supabase
-          .from("sub_admin_course_scopes")
-          .select("course_code")
-          .eq("profile_id", user.id);
-        const scopeCodes = ((scopes as { course_code: string }[] | null) || []).map((s) => s.course_code);
-        setSubAdminCourseScopes(scopeCodes);
-      } else {
-        setSubAdminCourseScopes([]);
-      }
-      setAuthChecking(false);
+    if (!accessOk || !graderId || !graderRole) return;
+    if (graderRole !== "sub_admin") {
+      setSubAdminCourseScopes([]);
+      setScopesLoading(false);
+      return;
     }
-    void secureAccess();
+    let cancelled = false;
+    setScopesLoading(true);
+    (async () => {
+      const { data: scopes } = await supabase
+        .from("sub_admin_course_scopes")
+        .select("course_code")
+        .eq("profile_id", graderId);
+      const scopeCodes = ((scopes as { course_code: string }[] | null) || []).map((s) => s.course_code);
+      if (!cancelled) {
+        setSubAdminCourseScopes(scopeCodes);
+        setScopesLoading(false);
+      }
+    })();
     return () => {
-      mounted = false;
+      cancelled = true;
     };
-  }, [router]);
+  }, [accessOk, graderId, graderRole]);
+
+  const authChecking =
+    gateLoading || !accessOk || (graderRole === "sub_admin" && scopesLoading);
 
   const loadResponses = useCallback(async () => {
     if (authChecking || !graderId) return;

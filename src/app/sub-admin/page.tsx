@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS } from "@/lib/subjects";
 
 type TestRow = {
@@ -37,10 +38,11 @@ type CommitteeScoreRow = {
 };
 
 export default function SubAdminPage() {
-  const router = useRouter();
-  const [ok, setOk] = useState(false);
-  const [myRole, setMyRole] = useState<string | null>(null);
-  const [myUserId, setMyUserId] = useState<string | null>(null);
+  const { ready: accessOk, loading: gateLoading, userId: myUserId, role: myRole } = useRoleGate(
+    COMMITTEE_PAGE_ROLES,
+    { noUserRedirect: "/login", wrongRoleRedirect: "/dashboard" },
+  );
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [myCommitteeIds, setMyCommitteeIds] = useState<string[]>([]);
   const [committees, setCommittees] = useState<
     { id: string; name: string; subject: string | null; test_year: number | null }[]
@@ -74,26 +76,10 @@ export default function SubAdminPage() {
       ? filteredTests.filter((t) => t.committee_id != null && myCommitteeIds.includes(t.committee_id))
       : filteredTests;
 
-  const canAccess = useCallback((role: string) => role === "sub_admin" || role === "admin" || role === "educator", []);
   const canEditAwaitingTests = myRole === "sub_admin";
 
   const load = useCallback(async () => {
-    const { data: s } = await supabase.auth.getSession();
-    if (!s.session?.user) {
-      router.replace("/login");
-      return;
-    }
-    const { data: me } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", s.session.user.id)
-      .maybeSingle();
-    if (!me?.role || !canAccess(me.role)) {
-      router.replace("/dashboard");
-      return;
-    }
-    setMyRole(me.role);
-    setMyUserId(s.session.user.id);
+    if (!accessOk || gateLoading || !myUserId || !myRole) return;
     setErr(null);
     const { data: c } = await supabase
       .from("committees")
@@ -109,7 +95,7 @@ export default function SubAdminPage() {
     const { data: ownMemberships } = await supabase
       .from("committee_members")
       .select("committee_id")
-      .eq("profile_id", s.session.user.id);
+      .eq("profile_id", myUserId);
     const membershipIds = ((ownMemberships as { committee_id: string }[] | null) || []).map((m) => m.committee_id);
     setMyCommitteeIds(membershipIds);
 
@@ -126,10 +112,10 @@ export default function SubAdminPage() {
     const { data: scopedRows } = await supabase
       .from("sub_admin_course_scopes")
       .select("course_code")
-      .eq("profile_id", s.session.user.id);
+      .eq("profile_id", myUserId);
     const scopedCodes = ((scopedRows as { course_code: string }[] | null) || []).map((r) => r.course_code);
     const merged =
-      me.role === "sub_admin"
+      myRole === "sub_admin"
         ? mergedAll.filter((t) => scopedCodes.includes(t.subject_code))
         : mergedAll;
     merged.sort((a, b) => a.subject.localeCompare(b.subject) || a.subject_code.localeCompare(b.subject_code));
@@ -145,12 +131,12 @@ export default function SubAdminPage() {
       const rows = rawScores.filter((srow) => srow.test_kind === row.kind && srow.test_id === row.id);
       const count = rows.length;
       const avg = count ? Math.round((rows.reduce((acc, srow) => acc + srow.standard_score, 0) / count) * 10) / 10 : null;
-      const mine = rows.find((srow) => srow.reviewer_id === s.session?.user.id)?.standard_score ?? null;
+      const mine = rows.find((srow) => srow.reviewer_id === myUserId)?.standard_score ?? null;
       nextScores[key] = { average: avg, count, mine };
     }
     setCommitteeScores(nextScores);
-    setOk(true);
-  }, [router, canAccess]);
+    setDataLoaded(true);
+  }, [accessOk, gateLoading, myUserId, myRole]);
 
   useEffect(() => {
     load();
@@ -327,11 +313,11 @@ export default function SubAdminPage() {
   }, [scoreType, scoreSubject, onlyGraded]);
 
   useEffect(() => {
-    if (!ok || tab !== "scores") return;
+    if (!dataLoaded || tab !== "scores") return;
     void loadScores();
-  }, [ok, tab, loadScores]);
+  }, [dataLoaded, tab, loadScores]);
 
-  if (!ok) {
+  if (!accessOk || gateLoading || !dataLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center pt-20 text-gray-600">
         Loading...

@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { TEST_ASSIGNMENT_ROLES } from "@/lib/auth/roles";
+import { getAuthUserId } from "@/lib/auth/session";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 type TestGroup = { id: string; name: string; created_at: string };
 type TestGroupItem = {
@@ -25,8 +28,11 @@ type Assignment = {
 
 export default function TestAssignmentsPage() {
   const router = useRouter();
+  const { ready: accessOk, loading: gateLoading, role } = useRoleGate(TEST_ASSIGNMENT_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/practice-tests",
+  });
   const [ready, setReady] = useState(false);
-  const [role, setRole] = useState<string | null>(null);
 
   const [testGroups, setTestGroups] = useState<TestGroup[]>([]);
   const [tgItems, setTgItems] = useState<Record<string, TestGroupItem[]>>({});
@@ -55,22 +61,7 @@ export default function TestAssignmentsPage() {
 
   const load = useCallback(async () => {
     setErr(null);
-    const { data: s } = await supabase.auth.getSession();
-    if (!s.session?.user) {
-      router.replace("/login");
-      return;
-    }
-    const { data: p } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", s.session.user.id)
-      .maybeSingle();
-    const r = p?.role ?? null;
-    if (!r || !["admin", "sub_admin"].includes(r)) {
-      router.replace("/exam");
-      return;
-    }
-    setRole(r);
+    if (!accessOk || gateLoading || !role) return;
 
     const [{ data: tg }, { data: sg }, { data: asg }] = await Promise.all([
       supabase.from("staff_test_groups").select("id, name, created_at").order("created_at", { ascending: false }),
@@ -125,7 +116,7 @@ export default function TestAssignmentsPage() {
     }
 
     setReady(true);
-  }, [router]);
+  }, [accessOk, gateLoading, role]);
 
   useEffect(() => {
     void load();
@@ -139,11 +130,11 @@ export default function TestAssignmentsPage() {
       setErr("Name the test group.");
       return;
     }
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
+    const uid = await getAuthUserId();
+    if (!uid) return;
     const { error } = await supabase
       .from("staff_test_groups")
-      .insert({ name, created_by: u.user.id })
+      .insert({ name, created_by: uid })
       .select("id")
       .single();
     if (error) {
@@ -167,6 +158,43 @@ export default function TestAssignmentsPage() {
     if ((meq && sba) || (!meq && !sba)) {
       setErr("Provide exactly one UUID: either a MEQ test id OR an SBA test id.");
       return;
+    }
+    if (meq) {
+      const { data: row, error: fe } = await supabase
+        .from("meq_tests")
+        .select("id, review_status, test_function")
+        .eq("id", meq)
+        .maybeSingle();
+      if (fe || !row) {
+        setErr("Could not find that MEQ test, or you have no access.");
+        return;
+      }
+      if (row.test_function !== "real_test") {
+        setErr("Test session bundles only accept MEQ rows with Test function = Real test (practice belongs in Practice tests).");
+        return;
+      }
+      if (row.review_status !== "approved") {
+        setErr("Only committee-approved tests can be scheduled. Wait for approval or pick another id.");
+        return;
+      }
+    } else if (sba) {
+      const { data: row, error: fe } = await supabase
+        .from("sba_tests")
+        .select("id, review_status, test_function")
+        .eq("id", sba)
+        .maybeSingle();
+      if (fe || !row) {
+        setErr("Could not find that SBA test, or you have no access.");
+        return;
+      }
+      if (row.test_function !== "real_test") {
+        setErr("Test session bundles only accept SBA rows with Test function = Real test.");
+        return;
+      }
+      if (row.review_status !== "approved") {
+        setErr("Only committee-approved tests can be scheduled.");
+        return;
+      }
     }
     const row: { test_group_id: string; meq_test_id?: string; sba_test_id?: string; sort_order: number } = {
       test_group_id: pickTg,
@@ -194,11 +222,11 @@ export default function TestAssignmentsPage() {
       setErr("Name the student group.");
       return;
     }
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
+    const uid = await getAuthUserId();
+    if (!uid) return;
     const { error } = await supabase
       .from("staff_student_groups")
-      .insert({ name, created_by: u.user.id });
+      .insert({ name, created_by: uid });
     if (error) {
       setErr(error.message);
       return;
@@ -249,14 +277,14 @@ export default function TestAssignmentsPage() {
       setErr("Choose a test group and enter a title.");
       return;
     }
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
+    const uid = await getAuthUserId();
+    if (!uid) return;
     const { data: asg, error: ae } = await supabase
       .from("staff_test_assignments")
       .insert({
         test_group_id: asgTg,
         title: asgTitle.trim(),
-        created_by: u.user.id,
+        created_by: uid,
         window_start: winStart ? new Date(winStart).toISOString() : null,
         window_end: winEnd ? new Date(winEnd).toISOString() : null,
       })
@@ -308,7 +336,7 @@ export default function TestAssignmentsPage() {
     void load();
   };
 
-  if (!ready) {
+  if (!accessOk || gateLoading || !ready) {
     return (
       <div className="min-h-screen flex items-center justify-center pt-20">
         <span className="text-gray-600">Loading…</span>
@@ -325,13 +353,13 @@ export default function TestAssignmentsPage() {
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mt-2">Test season assignments</h1>
           <p className="text-gray-600 text-sm mt-1">
-            Build reusable <strong>test groups</strong> and <strong>student groups</strong>, then create a{" "}
-            <strong>season assignment</strong> with an optional time window. Students see assigned exams on the exam
-            page when the window is open.
+            Build reusable <strong>test groups</strong> (only committee-approved{" "}
+            <strong>real</strong> tests) and <strong>student groups</strong>, then create a scheduling row with an
+            optional window. Assigned students open them under <strong>Test session</strong> in the app.
           </p>
           <p className="text-amber-800 text-sm mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            Apply Supabase migration <code className="font-mono">020_practice_snapshots_test_assignments.sql</code>{" "}
-            if tables are missing.
+            Requires migrations <code className="font-mono">020_*</code> (tables) and{" "}
+            <code className="font-mono">021_*</code> (students only see assigned real tests via RLS).
           </p>
         </div>
 
@@ -373,7 +401,7 @@ export default function TestAssignmentsPage() {
             <div className="flex flex-col gap-2">
               <input
                 className="border rounded px-3 py-2 font-mono text-sm"
-                placeholder="MEQ test UUID (from admin or URL /exam/[id])"
+                placeholder="MEQ UUID · approved · Real test only (staff dashboard)"
                 value={addMeqId}
                 onChange={(e) => setAddMeqId(e.target.value)}
               />

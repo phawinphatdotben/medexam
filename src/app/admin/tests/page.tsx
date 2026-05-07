@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ADMIN_ONLY_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS, type SubjectName } from "@/lib/subjects";
 
 type Result = {
@@ -24,8 +25,11 @@ type StaffRequestRow = {
 };
 
 export default function AdminTestSearchPage() {
-  const router = useRouter();
-  const [allowed, setAllowed] = useState(false);
+  const { ready: accessOk, loading: gateLoading } = useRoleGate(ADMIN_ONLY_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/dashboard",
+  });
+  const allowed = accessOk && !gateLoading;
   const [subject, setSubject] = useState<SubjectName | "">("");
   const [year, setYear] = useState(new Date().getFullYear().toString());
   const [searched, setSearched] = useState(false);
@@ -35,27 +39,6 @@ export default function AdminTestSearchPage() {
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"requests" | "tests">("requests");
   const [approving, setApproving] = useState<string | null>(null);
-
-  useEffect(() => {
-    const run = async () => {
-      const { data: s } = await supabase.auth.getSession();
-      if (!s.session) {
-        router.replace("/login");
-        return;
-      }
-      const { data: p } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", s.session.user.id)
-        .maybeSingle();
-      if (p?.role !== "admin") {
-        router.replace("/dashboard");
-        return;
-      }
-      setAllowed(true);
-    };
-    run();
-  }, [router]);
 
   const loadRequests = async () => {
     const { data, error } = await supabase

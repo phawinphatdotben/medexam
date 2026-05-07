@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 interface GradedResponse {
   id: string;
@@ -12,6 +13,7 @@ interface GradedResponse {
 }
 
 export default function MyGrades() {
+  const { user, loading: authLoading } = useAuth();
   const [gradedResponses, setGradedResponses] = useState<GradedResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [userError, setUserError] = useState<string | null>(null);
@@ -22,13 +24,13 @@ export default function MyGrades() {
       setLoading(true);
       setUserError(null);
 
-      const { data: userData, error: userErrorData } = await supabase.auth.getUser();
-      if (userErrorData || !userData.user) {
+      if (authLoading) return;
+      if (!user?.id) {
         setUserError("You must be logged in to view your grades.");
         setLoading(false);
         return;
       }
-      const userId = userData.user.id;
+      const userId = user.id;
 
       const { data, error } = await supabase
         .from("meq_stage_responses")
@@ -90,7 +92,7 @@ export default function MyGrades() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authLoading, user?.id]);
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-white pt-20 pb-10 px-4">

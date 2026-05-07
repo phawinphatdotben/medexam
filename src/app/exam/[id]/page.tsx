@@ -94,7 +94,11 @@ export default function StudentMeqExamPage() {
 
       if (testErr || !testData) {
         if (isMounted) {
-          setError("Could not load this exam.");
+          setError(
+            me?.role === "student"
+              ? "This exam could not be loaded. Practice MEQ/SBA items must be approved; real exams only open from your Test session if an admin assigned them."
+              : "Could not load this exam.",
+          );
           setLoading(false);
         }
         return;

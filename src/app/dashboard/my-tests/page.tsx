@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 type Row = {
   id: string;
@@ -25,25 +27,16 @@ const statusClass: Record<string, string> = {
 
 export default function MyTestsPage() {
   const router = useRouter();
+  const { ready: accessOk, loading: gateLoading, userId: uid, role: profileRole } = useRoleGate(
+    STAFF_DASHBOARD_ROLES,
+    { noUserRedirect: "/login", wrongRoleRedirect: "/practice-tests" },
+  );
   const [ready, setReady] = useState(false);
   const [rows, setRows] = useState<Row[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [uid, setUid] = useState<string | null>(null);
-  const [profileRole, setProfileRole] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data: s } = await supabase.auth.getSession();
-    if (!s.session?.user) {
-      router.replace("/login");
-      return;
-    }
-    setUid(s.session.user.id);
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", s.session.user.id)
-      .maybeSingle();
-    setProfileRole(prof?.role ?? null);
+    if (!accessOk || gateLoading || !uid) return;
     setErr(null);
     const { data: sba, error: e1 } = await supabase
       .from("sba_tests")
@@ -77,13 +70,13 @@ export default function MyTestsPage() {
     );
     setRows(merged);
     setReady(true);
-  }, [router]);
+  }, [accessOk, gateLoading, uid]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (!ready) {
+  if (!accessOk || gateLoading || !ready) {
     return (
       <div className="min-h-screen flex items-center justify-center pt-20">
         <span className="text-gray-600">Loading...</span>

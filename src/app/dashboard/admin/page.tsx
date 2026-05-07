@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ADMIN_ONLY_ROLES } from "@/lib/auth/roles";
+import { getAccessToken } from "@/lib/auth/session";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 interface ProfileRow {
   id: string;
@@ -12,10 +14,11 @@ interface ProfileRow {
 }
 
 export default function AdminRoleManagementPage() {
-  const [loading, setLoading] = useState(true);
+  const { ready: accessOk, loading: gateLoading, user } = useRoleGate(ADMIN_ONLY_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/practice-tests",
+  });
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
-  const [user, setUser] = useState<any>(null);
-  const [myRole, setMyRole] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [tab, setTab] = useState<"all" | "pending">("all");
@@ -27,55 +30,9 @@ export default function AdminRoleManagementPage() {
   });
   const [pwResetting, setPwResetting] = useState<string | null>(null);
 
-  const router = useRouter();
-
-  // Security check for admin-only access
-  useEffect(() => {
-    let mounted = true;
-    const checkAdmin = async () => {
-      setLoading(true);
-
-      // 1. Get user session
-      const { data: userData } = await supabase.auth.getUser();
-      const currentUser = userData?.user ?? null;
-      setUser(currentUser);
-
-      if (!currentUser || !currentUser.id) {
-        router.replace("/exam");
-        return;
-      }
-
-      // 2. Check profile role
-      const { data: profile, error: profileErr } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", currentUser.id)
-        .maybeSingle();
-
-      if (
-        profileErr ||
-        !profile ||
-        !profile.role ||
-        profile.role !== "admin"
-      ) {
-        router.replace("/exam");
-        return;
-      }
-
-      setMyRole(profile.role);
-      setLoading(false);
-    };
-
-    checkAdmin();
-
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
-
   // Fetch all profiles
   useEffect(() => {
-    if (loading) return;
+    if (!accessOk || gateLoading) return;
     let mounted = true;
     const fetchProfiles = async () => {
       setError(null);
@@ -122,7 +79,7 @@ export default function AdminRoleManagementPage() {
     return () => {
       mounted = false;
     };
-  }, [loading]);
+  }, [accessOk, gateLoading]);
 
   // Handler to update user role
   const updateRole = async (userId: string, newRole: string) => {
@@ -196,8 +153,7 @@ export default function AdminRoleManagementPage() {
   const resetPasswordToDefault = async (targetUserId: string) => {
     setPwResetting(targetUserId);
     setError(null);
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
+    const token = await getAccessToken();
     if (!token) {
       setError("Not signed in — refresh the page and try again.");
       setPwResetting(null);
@@ -253,7 +209,7 @@ export default function AdminRoleManagementPage() {
     setUpdating(null);
   };
 
-  if (loading) {
+  if (!accessOk || gateLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <span className="text-black text-lg font-semibold">

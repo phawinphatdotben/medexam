@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { ADMIN_ONLY_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 type RubricLog = {
   id: string;
@@ -36,29 +37,19 @@ function downloadJsonl(filename: string, lines: Record<string, unknown>[]) {
 }
 
 export default function AdminAuditPage() {
-  const router = useRouter();
+  const { ready: accessOk, loading: gateLoading } = useRoleGate(ADMIN_ONLY_ROLES, {
+    noUserRedirect: "/login",
+    wrongRoleRedirect: "/practice-tests",
+  });
   const [loading, setLoading] = useState(true);
   const [rubricLogs, setRubricLogs] = useState<RubricLog[]>([]);
   const [training, setTraining] = useState<TrainingRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!accessOk || gateLoading) return;
     setLoading(true);
     setError(null);
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) {
-      router.replace("/exam");
-      return;
-    }
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", u.user.id)
-      .maybeSingle();
-    if (profile?.role !== "admin") {
-      router.replace("/exam");
-      return;
-    }
 
     const [rRes, tRes] = await Promise.all([
       supabase
@@ -93,13 +84,13 @@ export default function AdminAuditPage() {
       );
     }
     setLoading(false);
-  }, [router]);
+  }, [accessOk, gateLoading]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (loading) {
+  if (!accessOk || gateLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white pt-20">
         <span className="text-gray-700">Loading audit log…</span>

@@ -70,7 +70,11 @@ export default function StudentSbaExamPage() {
         .maybeSingle();
       if (terr || !t) {
         if (m) {
-          setError("Could not load this test.");
+          setError(
+            me?.role === "student"
+              ? "This test could not be loaded. Practice items must be approved; real exams only open from your Test session when assigned."
+              : "Could not load this test.",
+          );
           setLoading(false);
         }
         return;

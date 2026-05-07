@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 type RecentTestRow = {
   id: string;
@@ -21,64 +22,19 @@ interface StudentResultRow {
 }
 
 export default function EducatorDashboard() {
+  const { ready: accessOk, loading: gateLoading, userId: currentUserId, role: userRole } = useRoleGate(
+    STAFF_DASHBOARD_ROLES,
+    { noUserRedirect: "/login", wrongRoleRedirect: "/practice-tests" },
+  );
+  const authChecking = gateLoading || !accessOk;
+
   const [recentTests, setRecentTests] = useState<RecentTestRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [studentResults, setStudentResults] = useState<StudentResultRow[]>([]);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsError, setResultsError] = useState<string | null>(null);
-
-  const [authChecking, setAuthChecking] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
-
-  const router = useRouter();
-
-  // New RBAC role-based security check
-  useEffect(() => {
-    let mounted = true;
-    const checkAccess = async () => {
-      setAuthChecking(true);
-      // 1. Get the user from supabase
-      const { data: userData, error } = await supabase.auth.getUser();
-      if (!mounted) return;
-
-      const user = userData.user;
-      if (!user) {
-        router.push("/exam");
-        return;
-      }
-
-      // 2. Query the profile for the role
-      const { data: profiles, error: profileError } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (
-        profileError ||
-        !profiles ||
-        !profiles.role ||
-        !["admin", "educator", "sub_admin"].includes(profiles.role)
-      ) {
-        router.push("/exam");
-        return;
-      }
-
-      setCurrentUserId(user.id);
-      setUserRole(profiles.role); // Track role in state
-
-      setAuthChecking(false);
-    };
-
-    checkAccess();
-
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
 
   useEffect(() => {
     if (authChecking) return;
