@@ -12,7 +12,7 @@ export default function CreateTestHubPage() {
       <div className="flex flex-col sm:flex-row gap-4 w-full max-w-lg">
         <Link
           href="/dashboard/create-sba"
-          className="flex-1 text-center bg-teal-600 text-white font-semibold py-4 rounded-xl shadow hover:bg-teal-700 transition"
+          className="flex-1 text-center bg-blue-900 text-white font-semibold py-4 rounded-xl shadow hover:bg-blue-800 transition"
         >
           SBA (single best answer)
         </Link>

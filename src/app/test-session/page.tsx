@@ -226,15 +226,15 @@ export default function TestSessionPage() {
   if (authTimedOut) {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4 text-center">
-        <p className="text-teal-800 text-lg font-semibold">Still checking your session…</p>
+        <p className="text-blue-900 text-lg font-semibold">Still checking your session…</p>
         <p className="text-gray-600 text-sm mt-2 max-w-md">
           Authentication is taking longer than expected. Re-login or open practice tests while this recovers.
         </p>
         <div className="mt-5 flex items-center gap-3">
-          <Link href="/login" className="px-4 py-2 rounded bg-teal-700 text-white font-semibold">
+          <Link href="/login" className="px-4 py-2 rounded bg-blue-800 text-white font-semibold">
             Re-login
           </Link>
-          <Link href="/practice-tests" className="px-4 py-2 rounded border border-teal-300 text-teal-800 font-semibold">
+          <Link href="/practice-tests" className="px-4 py-2 rounded border border-blue-400 text-blue-900 font-semibold">
             Practice tests
           </Link>
         </div>
@@ -244,7 +244,7 @@ export default function TestSessionPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-teal-700">Checking session…</div>
+      <div className="min-h-screen flex items-center justify-center text-blue-800">Checking session…</div>
     );
   }
 
@@ -260,7 +260,7 @@ export default function TestSessionPage() {
     return (
       <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
         <p className="text-gray-700 mb-4">Test session lists are only for student accounts.</p>
-        <Link href="/practice-tests" className="text-teal-700 font-semibold underline">
+        <Link href="/practice-tests" className="text-blue-800 font-semibold underline">
           Go to practice tests
         </Link>
       </div>
@@ -270,7 +270,7 @@ export default function TestSessionPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
-        <h1 className="text-3xl font-bold text-teal-700 tracking-tight">Test session</h1>
+        <h1 className="text-3xl font-bold text-blue-800 tracking-tight">Test session</h1>
         <p className="mt-2 text-sm text-gray-600 max-w-2xl">
           Official exams assigned to you (or your group) by an administrator. Each item must be committee-approved.
           Opens only inside the scheduling window shown below.
@@ -279,13 +279,13 @@ export default function TestSessionPage() {
 
       <main className="flex-1 w-full max-w-3xl mx-auto mt-10 px-4 pb-16">
         {loading ? (
-          <div className="flex justify-center py-24 text-teal-700 font-medium">Loading your session…</div>
+          <div className="flex justify-center py-24 text-blue-800 font-medium">Loading your session…</div>
         ) : cards.length === 0 ? (
-          <div className="text-gray-600 text-center py-16 border border-dashed border-amber-200 rounded-xl bg-amber-50/40">
+          <div className="text-gray-600 text-center py-16 border border-dashed border-orange-300 rounded-xl bg-orange-100/40">
             <p className="text-lg mb-2">No tests are assigned to you in the current window.</p>
             <p className="text-sm">
               Practice materials are always under{" "}
-              <Link href="/practice-tests" className="text-teal-700 font-semibold underline">
+              <Link href="/practice-tests" className="text-blue-800 font-semibold underline">
                 Practice tests
               </Link>
               .
@@ -295,7 +295,7 @@ export default function TestSessionPage() {
           <div className="space-y-10">
             {groupedByAssignment.map(([assignmentId, items]) => (
               <section key={assignmentId} className="space-y-3">
-                <div className="border-l-4 border-amber-500 pl-3">
+                <div className="border-l-4 border-orange-1000 pl-3">
                   <h2 className="text-lg font-bold text-gray-900">{items[0]?.assignmentTitle ?? "Assignment"}</h2>
                   {items[0]?.windowStart || items[0]?.windowEnd ? (
                     <p className="text-xs text-gray-600 mt-1">
@@ -316,13 +316,13 @@ export default function TestSessionPage() {
                   {items.map((exam) => (
                     <div
                       key={exam.key}
-                      className="bg-white border border-amber-200 rounded-xl p-5 shadow-sm flex flex-col gap-2"
+                      className="bg-white border border-orange-300 rounded-xl p-5 shadow-sm flex flex-col gap-2"
                     >
                       <div className="flex justify-between gap-2">
-                        <h3 className="text-xl font-semibold text-teal-900">
+                        <h3 className="text-xl font-semibold text-blue-950">
                           {exam.subject} ({exam.subjectCode})
                         </h3>
-                        <span className="text-xs font-bold bg-amber-200 text-amber-950 px-2 py-0.5 rounded-full shrink-0">
+                        <span className="text-xs font-bold bg-orange-300 text-orange-950 px-2 py-0.5 rounded-full shrink-0">
                           {exam.kind}
                         </span>
                       </div>
@@ -330,7 +330,7 @@ export default function TestSessionPage() {
                       <div className="flex justify-end pt-1">
                         <Link
                           href={exam.href}
-                          className="bg-amber-700 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-amber-800"
+                          className="bg-orange-800 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-orange-900"
                         >
                           Begin
                         </Link>

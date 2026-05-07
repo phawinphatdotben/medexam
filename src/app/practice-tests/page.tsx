@@ -175,8 +175,8 @@ function PracticeTestsInner() {
             href={`/practice-tests?subject=${encodeURIComponent(subj)}`}
             className={`text-sm px-3 py-1.5 rounded-lg border transition ${
               subjectFilter === subj
-                ? "bg-teal-600 text-white border-teal-700"
-                : "border-teal-200 text-teal-800 hover:bg-teal-50"
+                ? "bg-blue-900 text-white border-blue-800"
+                : "border-blue-300 text-blue-900 hover:bg-blue-100"
             }`}
           >
             {subj}
@@ -198,7 +198,7 @@ function PracticeTestsInner() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
-        <h1 className="text-3xl font-bold text-teal-700 tracking-tight">Practice tests</h1>
+        <h1 className="text-3xl font-bold text-blue-800 tracking-tight">Practice tests</h1>
         <p className="mt-2 text-sm text-gray-600 max-w-2xl">
           Committee-approved practice exams only. Sorted by department; filter by subject area and search by course
           code. Any student may use practice tests.
@@ -206,7 +206,7 @@ function PracticeTestsInner() {
         {subjectFilter ? (
           <p className="mt-1 text-sm text-gray-700">
             Subject area filter:{" "}
-            <span className="font-semibold text-teal-800">{subjectFilter}</span>
+            <span className="font-semibold text-blue-900">{subjectFilter}</span>
           </p>
         ) : null}
         {subjectPicker}
@@ -215,17 +215,17 @@ function PracticeTestsInner() {
       <main className="flex-1 w-full max-w-3xl mx-auto mt-8 px-4 pb-16">
         {authTimedOut ? (
           <div className="text-center py-16">
-            <p className="text-teal-800 text-lg font-semibold">Still checking your session…</p>
+            <p className="text-blue-900 text-lg font-semibold">Still checking your session…</p>
             <p className="text-gray-600 text-sm mt-2 max-w-md mx-auto">
               Authentication is taking too long. Try re-login or open public practice listings again.
             </p>
             <div className="mt-5 flex items-center justify-center gap-3">
-              <Link href="/login" className="px-4 py-2 rounded bg-teal-700 text-white font-semibold">
+              <Link href="/login" className="px-4 py-2 rounded bg-blue-800 text-white font-semibold">
                 Re-login
               </Link>
               <Link
                 href={subjectFilter ? `/practice-tests?subject=${encodeURIComponent(subjectFilter)}` : "/practice-tests"}
-                className="px-4 py-2 rounded border border-teal-300 text-teal-800 font-semibold"
+                className="px-4 py-2 rounded border border-blue-400 text-blue-900 font-semibold"
               >
                 Retry page
               </Link>
@@ -233,19 +233,19 @@ function PracticeTestsInner() {
           </div>
         ) : authLoading ? (
           <div className="flex items-center justify-center py-24">
-            <span className="text-teal-700 font-medium">Checking session…</span>
+            <span className="text-blue-800 font-medium">Checking session…</span>
           </div>
         ) : !user ? (
           <div className="text-center py-14">
             <p className="text-gray-600 mb-4">Sign in to view practice tests.</p>
-            <Link href="/login" className="text-teal-700 font-semibold underline">
+            <Link href="/login" className="text-blue-800 font-semibold underline">
               Login
             </Link>
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center py-24">
             <svg
-              className="animate-spin h-8 w-8 text-teal-600 mr-3"
+              className="animate-spin h-8 w-8 text-blue-900 mr-3"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -253,7 +253,7 @@ function PracticeTestsInner() {
               <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
             </svg>
-            <span className="text-teal-700 font-medium">Loading practice tests…</span>
+            <span className="text-blue-800 font-medium">Loading practice tests…</span>
           </div>
         ) : exams.length === 0 ? (
           <div className="text-gray-500 text-center py-16 text-lg border border-dashed border-gray-200 rounded-xl">
@@ -270,7 +270,7 @@ function PracticeTestsInner() {
                   id="dept-filter"
                   value={departmentFilter}
                   onChange={(e) => setDepartmentFilter(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-300"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 >
                   {departmentOptions.map((d) => (
                     <option key={d || "__all"} value={d}>
@@ -289,7 +289,7 @@ function PracticeTestsInner() {
                   value={subjectCodeSearch}
                   onChange={(e) => setSubjectCodeSearch(e.target.value)}
                   placeholder="e.g. MED101"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-300"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>
             </div>
@@ -302,18 +302,18 @@ function PracticeTestsInner() {
               <div className="space-y-10">
                 {grouped.map(({ dept, items }) => (
                   <section key={dept} className="space-y-4">
-                    <h2 className="text-lg font-bold text-gray-900 border-b border-teal-100 pb-2">{dept}</h2>
+                    <h2 className="text-lg font-bold text-gray-900 border-b border-blue-200 pb-2">{dept}</h2>
                     <div className="grid gap-5">
                       {items.map((exam) => (
                         <div
                           key={`${exam.kind}-${exam.id}`}
-                          className="bg-gray-50 border border-teal-200 rounded-xl shadow-sm p-5 flex flex-col gap-2 hover:shadow-md transition"
+                          className="bg-gray-50 border border-blue-300 rounded-xl shadow-sm p-5 flex flex-col gap-2 hover:shadow-md transition"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-xl font-semibold text-teal-800">
+                            <h3 className="text-xl font-semibold text-blue-900">
                               {exam.subject} ({exam.subjectCode})
                             </h3>
-                            <span className="text-xs font-bold bg-teal-100 text-teal-800 px-2.5 py-1 rounded-full">
+                            <span className="text-xs font-bold bg-blue-200 text-blue-900 px-2.5 py-1 rounded-full">
                               {exam.kind}
                             </span>
                           </div>
@@ -323,7 +323,7 @@ function PracticeTestsInner() {
                           <div className="flex justify-end pt-1">
                             <Link
                               href={exam.href}
-                              className="bg-teal-600 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-teal-700"
+                              className="bg-blue-900 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-blue-800"
                             >
                               Start practice
                             </Link>
@@ -346,7 +346,7 @@ export default function PracticeTestsPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center text-teal-700">Loading…</div>
+        <div className="min-h-screen flex items-center justify-center text-blue-800">Loading…</div>
       }
     >
       <PracticeTestsInner />

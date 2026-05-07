@@ -28,7 +28,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">
-      <span className="text-teal-700 text-lg font-semibold">Loading...</span>
+      <span className="text-blue-800 text-lg font-semibold">Loading...</span>
     </div>
   );
 }

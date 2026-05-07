@@ -112,7 +112,7 @@ export default function AdminAuditPage() {
       </header>
       <main className="flex-1 max-w-4xl mx-auto w-full px-6 py-8 space-y-12">
         {error ? (
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded p-4 text-sm">{error}</div>
+          <div className="bg-orange-100 border border-orange-300 text-orange-950 rounded p-4 text-sm">{error}</div>
         ) : null}
 
         <section>

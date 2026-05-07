@@ -263,7 +263,7 @@ export default function StudentSbaExamPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
-        <span className="text-teal-700 text-lg">Loading test…</span>
+        <span className="text-blue-800 text-lg">Loading test…</span>
       </div>
     );
   }
@@ -287,7 +287,7 @@ export default function StudentSbaExamPage() {
               type="button"
               onClick={() => void retake()}
               disabled={saving}
-              className="mt-5 bg-teal-700 text-white font-semibold px-6 py-2 rounded-lg hover:bg-teal-800 disabled:opacity-60"
+              className="mt-5 bg-blue-800 text-white font-semibold px-6 py-2 rounded-lg hover:bg-blue-900 disabled:opacity-60"
             >
               {saving ? "Resetting..." : "Retake (practice) — see last choices beside questions"}
             </button>
@@ -303,19 +303,19 @@ export default function StudentSbaExamPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col pb-16">
       <header className="border-b border-gray-200 px-6 py-6">
-        <h1 className="text-2xl font-bold text-teal-800 flex flex-wrap items-center gap-2">
+        <h1 className="text-2xl font-bold text-blue-900 flex flex-wrap items-center gap-2">
           <span>
             {test.subject} <span className="text-gray-500 font-medium">({test.subject_code})</span>
           </span>
           {test.test_function === "practice" ? (
-            <span className="text-xs font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded">Practice</span>
+            <span className="text-xs font-bold bg-orange-200 text-orange-950 px-2 py-0.5 rounded">Practice</span>
           ) : (
             <span className="text-xs font-bold bg-slate-200 text-slate-900 px-2 py-0.5 rounded">Real test</span>
           )}
         </h1>
         <p className="text-sm text-gray-600 mt-1">Single best answer: choose one option per question.</p>
         {!done ? (
-          <p className="text-sm font-semibold text-teal-900 mt-2">
+          <p className="text-sm font-semibold text-blue-950 mt-2">
             Time on this test: <span className="tabular-nums">{formatMmSs(elapsedSeconds)}</span>
           </p>
         ) : null}
@@ -328,7 +328,7 @@ export default function StudentSbaExamPage() {
           const showPrev = isPractice && !!prevOpt;
           return (
             <section key={q.id} className="border border-gray-200 rounded-lg p-6 space-y-4">
-              <div className="text-sm font-semibold text-teal-700">Q{q.sequence_order}</div>
+              <div className="text-sm font-semibold text-blue-800">Q{q.sequence_order}</div>
               <p className="text-gray-900 text-lg whitespace-pre-line">{q.stem}</p>
               {q.image_url ? (
                 <img src={q.image_url} alt="" className="max-w-full max-h-64 rounded border object-contain" />
@@ -355,8 +355,8 @@ export default function StudentSbaExamPage() {
                     ))}
                 </ul>
                 {showPrev ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm self-start">
-                    <div className="font-semibold text-amber-900 mb-1">Previous attempt</div>
+                  <div className="rounded-md border border-orange-300 bg-orange-100 p-4 text-sm self-start">
+                    <div className="font-semibold text-orange-950 mb-1">Previous attempt</div>
                     <p className="text-gray-800">
                       <span className="font-mono font-bold">{prevOpt!.id}.</span> {prevOpt!.text}
                     </p>
@@ -375,7 +375,7 @@ export default function StudentSbaExamPage() {
               type="button"
               onClick={() => void submit()}
               disabled={saving}
-              className="bg-teal-700 text-white font-semibold px-8 py-3 rounded-lg shadow hover:bg-teal-800 disabled:opacity-50"
+              className="bg-blue-800 text-white font-semibold px-8 py-3 rounded-lg shadow hover:bg-blue-900 disabled:opacity-50"
             >
               {saving ? "Submitting…" : "Submit all answers"}
             </button>

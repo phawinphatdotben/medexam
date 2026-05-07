@@ -279,7 +279,7 @@ export default function CreateMeqTestPage() {
           First page shows the overall time limit and case. Students type answers; each stage can
           have its own time limit.
         </p>
-        <div className="rounded-lg border border-teal-200 bg-teal-50/90 px-4 py-3 text-sm text-teal-950 mb-8 space-y-2">
+        <div className="rounded-lg border border-blue-300 bg-blue-100/90 px-4 py-3 text-sm text-blue-950 mb-8 space-y-2">
           <p>
             <span className="font-semibold">Pool & committee:</span> New tests submit as pending until the review
             committee approves them. Nothing is visible to students until it is approved.

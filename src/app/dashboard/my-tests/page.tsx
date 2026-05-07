@@ -20,7 +20,7 @@ type Row = {
 };
 
 const statusClass: Record<string, string> = {
-  pending_committee: "bg-amber-100 text-amber-900",
+  pending_committee: "bg-orange-200 text-orange-950",
   approved: "bg-green-100 text-green-900",
   rejected: "bg-red-100 text-red-900",
 };

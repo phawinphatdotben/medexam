@@ -61,14 +61,14 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-blue-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 to-blue-50 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg px-8 py-10">
-        <h1 className="text-2xl font-bold text-teal-800 mb-2">Set new password</h1>
+        <h1 className="text-2xl font-bold text-blue-900 mb-2">Set new password</h1>
         {!recovery && !done ? (
           <p className="text-sm text-gray-600 mb-4">
             Open the link from your reset email (it must point to this page). If you already clicked the email, wait a
             moment or{" "}
-            <Link href="/login/forgot-password" className="text-teal-700 underline">
+            <Link href="/login/forgot-password" className="text-blue-800 underline">
               request a new link
             </Link>
             .
@@ -90,7 +90,7 @@ export default function ResetPasswordPage() {
                 autoComplete="new-password"
                 required
                 minLength={6}
-                className="block w-full border border-gray-300 rounded px-4 py-3 outline-none focus:ring-2 focus:ring-teal-200"
+                className="block w-full border border-gray-300 rounded px-4 py-3 outline-none focus:ring-2 focus:ring-blue-300"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
@@ -106,7 +106,7 @@ export default function ResetPasswordPage() {
                 autoComplete="new-password"
                 required
                 minLength={6}
-                className="block w-full border border-gray-300 rounded px-4 py-3 outline-none focus:ring-2 focus:ring-teal-200"
+                className="block w-full border border-gray-300 rounded px-4 py-3 outline-none focus:ring-2 focus:ring-blue-300"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 disabled={loading}
@@ -118,14 +118,14 @@ export default function ResetPasswordPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded disabled:opacity-60"
+              className="w-full bg-blue-900 hover:bg-blue-800 text-white font-semibold py-3 rounded disabled:opacity-60"
             >
               {loading ? "Saving…" : "Update password"}
             </button>
           </form>
         )}
         <p className="mt-6 text-center text-sm text-gray-600">
-          <Link href="/login" className="text-teal-700 font-semibold hover:underline">
+          <Link href="/login" className="text-blue-800 font-semibold hover:underline">
             Back to login
           </Link>
         </p>

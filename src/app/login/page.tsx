@@ -120,13 +120,13 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-blue-50">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 to-blue-50">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg px-10 py-10">
         <div className="flex mb-8">
           <button
             className={`flex-1 py-2 font-semibold text-lg rounded-l-2xl border-r focus:outline-none ${
               mode === "login"
-                ? "text-teal-700 bg-teal-50"
+                ? "text-blue-800 bg-blue-100"
                 : "text-gray-400 bg-white"
             }`}
             onClick={() => {
@@ -141,7 +141,7 @@ export default function AuthPage() {
           <button
             className={`flex-1 py-2 font-semibold text-lg rounded-r-2xl focus:outline-none ${
               mode === "signup"
-                ? "text-teal-700 bg-teal-50"
+                ? "text-blue-800 bg-blue-100"
                 : "text-gray-400 bg-white"
             }`}
             onClick={() => {
@@ -162,7 +162,7 @@ export default function AuthPage() {
             <input
               id="email"
               name="email"
-              className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-teal-200 shadow-sm outline-none"
+              className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -179,7 +179,7 @@ export default function AuthPage() {
               {mode === "login" ? (
                 <a
                   href="/login/forgot-password"
-                  className="text-sm text-teal-700 font-semibold hover:underline"
+                  className="text-sm text-blue-800 font-semibold hover:underline"
                 >
                   Forgot password?
                 </a>
@@ -188,7 +188,7 @@ export default function AuthPage() {
             <input
               id="password"
               name="password"
-              className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-teal-200 shadow-sm outline-none"
+              className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -207,7 +207,7 @@ export default function AuthPage() {
               <select
                 id="signup-role"
                 name="signup-role"
-                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-teal-200 shadow-sm outline-none bg-white"
+                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none bg-white"
                 value={signupRole}
                 onChange={(e) => setSignupRole(e.target.value as "student" | "staff")}
                 disabled={loading}
@@ -225,7 +225,7 @@ export default function AuthPage() {
               <select
                 id="student-year"
                 name="student-year"
-                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-teal-200 shadow-sm outline-none bg-white"
+                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none bg-white"
                 value={studentYear}
                 onChange={(e) => setStudentYear(e.target.value)}
                 disabled={loading}
@@ -246,7 +246,7 @@ export default function AuthPage() {
               <input
                 id="confirm-password"
                 name="confirm-password"
-                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-teal-200 shadow-sm outline-none"
+                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none"
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -266,7 +266,7 @@ export default function AuthPage() {
           )}
           <button
             type="submit"
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold text-lg py-4 rounded transition disabled:opacity-60 disabled:cursor-not-allowed shadow"
+            className="w-full bg-blue-900 hover:bg-blue-800 text-white font-bold text-lg py-4 rounded transition disabled:opacity-60 disabled:cursor-not-allowed shadow"
             disabled={loading}
           >
             {loading

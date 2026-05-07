@@ -96,14 +96,14 @@ export default function MyGrades() {
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-white pt-20 pb-10 px-4">
-      <h1 className="text-3xl font-bold text-teal-700 mb-8 text-center tracking-tight">
+      <h1 className="text-3xl font-bold text-blue-800 mb-8 text-center tracking-tight">
         My examination results
       </h1>
 
       {loading ? (
         <div className="flex flex-col items-center mt-16">
           <svg
-            className="animate-spin h-8 w-8 text-teal-600 mb-4"
+            className="animate-spin h-8 w-8 text-blue-900 mb-4"
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
@@ -111,7 +111,7 @@ export default function MyGrades() {
             <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
-          <span className="text-teal-700 text-lg font-medium">Loading your grades...</span>
+          <span className="text-blue-800 text-lg font-medium">Loading your grades...</span>
         </div>
       ) : userError ? (
         <div className="bg-red-100 text-red-700 px-6 py-4 rounded shadow mt-8 font-semibold">
@@ -125,16 +125,16 @@ export default function MyGrades() {
         <div className="w-full max-w-3xl">
           <table className="w-full bg-white shadow-lg rounded-lg overflow-hidden">
             <thead>
-              <tr className="bg-teal-50 border-b border-teal-100">
-                <th className="py-3 px-4 text-left text-teal-800 font-bold">Test</th>
-                <th className="py-3 px-4 text-left text-teal-800 font-bold">Date</th>
-                <th className="py-3 px-4 text-left text-teal-800 font-bold">Score</th>
-                <th className="py-3 px-4 text-left text-teal-800 font-bold">Feedback</th>
+              <tr className="bg-blue-100 border-b border-blue-200">
+                <th className="py-3 px-4 text-left text-blue-900 font-bold">Test</th>
+                <th className="py-3 px-4 text-left text-blue-900 font-bold">Date</th>
+                <th className="py-3 px-4 text-left text-blue-900 font-bold">Score</th>
+                <th className="py-3 px-4 text-left text-blue-900 font-bold">Feedback</th>
               </tr>
             </thead>
             <tbody>
               {gradedResponses.map((resp) => (
-                <tr key={resp.id} className="border-b last:border-0 hover:bg-teal-50/20">
+                <tr key={resp.id} className="border-b last:border-0 hover:bg-blue-100/20">
                   <td className="py-3 px-4 font-medium text-gray-900">{resp.test_label}</td>
                   <td className="py-3 px-4 text-gray-600">
                     {new Date(resp.created_at).toLocaleDateString(undefined, {
@@ -147,7 +147,7 @@ export default function MyGrades() {
                   </td>
                   <td className="py-3 px-4">
                     {resp.human_override_score !== null ? (
-                      <span className="inline-block px-3 py-1 rounded-full bg-teal-100 text-teal-900 font-semibold text-base">
+                      <span className="inline-block px-3 py-1 rounded-full bg-blue-200 text-blue-950 font-semibold text-base">
                         {resp.human_override_score}
                       </span>
                     ) : (

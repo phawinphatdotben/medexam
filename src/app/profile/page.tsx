@@ -244,7 +244,7 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-white pt-20 pb-12 px-4">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold text-teal-800 mb-6">My Profile</h1>
+        <h1 className="text-3xl font-bold text-blue-900 mb-6">My Profile</h1>
         {error ? (
           <div className="p-3 rounded border border-red-200 bg-red-50 text-red-700">{error}</div>
         ) : (
@@ -337,7 +337,7 @@ export default function ProfilePage() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded font-semibold disabled:opacity-60"
+              className="bg-blue-900 hover:bg-blue-800 text-white px-5 py-2 rounded font-semibold disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save profile"}
             </button>

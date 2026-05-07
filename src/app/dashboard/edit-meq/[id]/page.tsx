@@ -208,7 +208,7 @@ export default function EditMeqRubricPage() {
         <div className="space-y-8">
           {stages.map((st) => (
             <section key={st.id} className="border rounded-lg p-4 space-y-3">
-              <div className="text-sm font-semibold text-teal-800">Stage {st.sequence_order}</div>
+              <div className="text-sm font-semibold text-blue-900">Stage {st.sequence_order}</div>
               <p className="text-sm text-gray-700 whitespace-pre-wrap border-l-2 border-gray-200 pl-2">
                 {st.question_text}
               </p>

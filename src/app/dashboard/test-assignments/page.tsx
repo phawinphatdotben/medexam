@@ -357,7 +357,7 @@ export default function TestAssignmentsPage() {
             <strong>real</strong> tests) and <strong>student groups</strong>, then create a scheduling row with an
             optional window. Assigned students open them under <strong>Test session</strong> in the app.
           </p>
-          <p className="text-amber-800 text-sm mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          <p className="text-orange-900 text-sm mt-2 bg-orange-100 border border-orange-300 rounded px-3 py-2">
             Requires migrations <code className="font-mono">020_*</code> (tables) and{" "}
             <code className="font-mono">021_*</code> (students only see assigned real tests via RLS).
           </p>
@@ -378,7 +378,7 @@ export default function TestAssignmentsPage() {
                 placeholder="e.g. Spring cardio MEQ+SBA"
               />
             </div>
-            <button type="button" className="bg-teal-700 text-white px-4 py-2 rounded font-semibold" onClick={() => void createTestGroup()}>
+            <button type="button" className="bg-blue-800 text-white px-4 py-2 rounded font-semibold" onClick={() => void createTestGroup()}>
               Create
             </button>
           </div>
@@ -450,7 +450,7 @@ export default function TestAssignmentsPage() {
                 placeholder="e.g. Year 3 Group A"
               />
             </div>
-            <button type="button" className="bg-teal-700 text-white px-4 py-2 rounded font-semibold" onClick={() => void createStudentGroup()}>
+            <button type="button" className="bg-blue-800 text-white px-4 py-2 rounded font-semibold" onClick={() => void createStudentGroup()}>
               Create
             </button>
           </div>

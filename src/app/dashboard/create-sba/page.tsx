@@ -229,12 +229,12 @@ export default function CreateSbaTestPage() {
             &larr; Back
           </Link>
         </div>
-        <h1 className="text-3xl font-bold text-teal-800 mb-1">Create SBA test</h1>
+        <h1 className="text-3xl font-bold text-blue-900 mb-1">Create SBA test</h1>
         <p className="text-gray-600 text-sm mb-4">
           Each question gets a new UUID in the database. Committee status starts as &quot;pending
           committee&quot;.
         </p>
-        <div className="rounded-lg border border-teal-200 bg-teal-50/90 px-4 py-3 text-sm text-teal-950 mb-8 space-y-2">
+        <div className="rounded-lg border border-blue-300 bg-blue-100/90 px-4 py-3 text-sm text-blue-950 mb-8 space-y-2">
           <p>
             <span className="font-semibold">Pool & committee:</span> Staff-authored tests stay in the pool until
             approved. Students never see unapproved content.
@@ -337,9 +337,9 @@ export default function CreateSbaTestPage() {
           {questions.map((q, qIdx) => (
             <section
               key={qIdx}
-              className="border border-teal-200 rounded-lg p-6 space-y-4 bg-teal-50/30"
+              className="border border-blue-300 rounded-lg p-6 space-y-4 bg-blue-100/30"
             >
-              <h2 className="font-semibold text-lg text-teal-900">Question {qIdx + 1}</h2>
+              <h2 className="font-semibold text-lg text-blue-950">Question {qIdx + 1}</h2>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Question text</label>
                 <textarea
@@ -367,7 +367,7 @@ export default function CreateSbaTestPage() {
                   <button
                     type="button"
                     onClick={() => addOption(qIdx)}
-                    className="text-sm text-teal-700 font-medium hover:underline"
+                    className="text-sm text-blue-800 font-medium hover:underline"
                   >
                     + Add choice
                   </button>
@@ -429,7 +429,7 @@ export default function CreateSbaTestPage() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-teal-600 text-white font-semibold px-8 py-3 rounded-lg shadow disabled:opacity-50"
+              className="bg-blue-900 text-white font-semibold px-8 py-3 rounded-lg shadow disabled:opacity-50"
             >
               {saving ? "Saving..." : "Submit for committee review"}
             </button>

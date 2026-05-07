@@ -23,7 +23,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between">
         <a
           href="/"
-          className="text-2xl font-bold text-teal-700 tracking-tight hover:text-teal-800 transition"
+          className="text-2xl font-bold text-blue-800 tracking-tight hover:text-blue-900 transition"
         >
           Medical Examination Plateform
         </a>
@@ -31,25 +31,25 @@ export default function Navbar() {
           {showNavLinks && (
             <div className="flex gap-6">
               {canStaffDashboard && (
-                <a href="/dashboard" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+                <a href="/dashboard" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                   Staff
                 </a>
               )}
               {canGrade && userRole !== "sub_admin" && (
-                <a href="/dashboard/grade" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+                <a href="/dashboard/grade" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                   Grade
                 </a>
               )}
               {userRole === "sub_admin" && (
                 <a
                   href="/dashboard/test-assignments"
-                  className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition"
+                  className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition"
                 >
                   Test assignments
                 </a>
               )}
               {userRole === "sub_admin" && (
-                <a href="/sub-admin" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+                <a href="/sub-admin" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                   Sub-Admin
                 </a>
               )}
@@ -57,41 +57,41 @@ export default function Navbar() {
                 <>
                   <a
                     href="/dashboard/test-assignments"
-                    className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition"
+                    className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition"
                   >
                     Test assignments
                   </a>
-                  <a href="/admin/tests" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+                  <a href="/admin/tests" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                     Admin search
                   </a>
-                  <a href="/dashboard/admin/audit" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+                  <a href="/dashboard/admin/audit" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                     Audit log
                   </a>
                 </>
               )}
-              <a href="/my-grades" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+              <a href="/my-grades" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                 My Grades
               </a>
               {userRole === "student" && (
                 <>
                   <a
                     href="/practice-tests"
-                    className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition"
+                    className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition"
                   >
                     Practice tests
                   </a>
                   <a
                     href="/test-session"
-                    className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition"
+                    className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition"
                   >
                     Test session
                   </a>
                 </>
               )}
-              <a href="/subjects" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+              <a href="/subjects" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                 Subjects
               </a>
-              <a href="/profile" className="text-teal-700 hover:text-teal-900 px-2 py-1 font-semibold transition">
+              <a href="/profile" className="text-blue-800 hover:text-blue-950 px-2 py-1 font-semibold transition">
                 Profile
               </a>
             </div>
@@ -104,13 +104,13 @@ export default function Navbar() {
               <button
                 type="button"
                 onClick={() => void handleSignOut()}
-                className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded font-semibold shadow transition"
+                className="bg-blue-900 hover:bg-blue-800 text-white px-4 py-2 rounded font-semibold shadow transition"
               >
                 Sign Out
               </button>
             </>
           ) : (
-            <a href="/login" className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded font-semibold shadow transition">
+            <a href="/login" className="bg-blue-900 hover:bg-blue-800 text-white px-4 py-2 rounded font-semibold shadow transition">
               Login
             </a>
           )}

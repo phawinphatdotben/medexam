@@ -41,15 +41,15 @@ export default function SubjectSelectionPage() {
   if (authTimedOut) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white px-4 text-center">
-        <p className="text-teal-800 text-lg font-semibold">Still checking your session…</p>
+        <p className="text-blue-900 text-lg font-semibold">Still checking your session…</p>
         <p className="text-gray-600 text-sm mt-2 max-w-md">
           The connection to auth is taking too long. You can retry login or continue to practice tests.
         </p>
         <div className="mt-5 flex items-center gap-3">
-          <Link href="/login" className="px-4 py-2 rounded bg-teal-700 text-white font-semibold">
+          <Link href="/login" className="px-4 py-2 rounded bg-blue-800 text-white font-semibold">
             Re-login
           </Link>
-          <Link href="/practice-tests" className="px-4 py-2 rounded border border-teal-300 text-teal-800 font-semibold">
+          <Link href="/practice-tests" className="px-4 py-2 rounded border border-blue-400 text-blue-900 font-semibold">
             Open practice tests
           </Link>
         </div>
@@ -60,7 +60,7 @@ export default function SubjectSelectionPage() {
   if (loading || checking) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
-        <span className="text-teal-700 text-lg font-semibold">Checking account...</span>
+        <span className="text-blue-800 text-lg font-semibold">Checking account...</span>
       </div>
     );
   }
@@ -68,13 +68,13 @@ export default function SubjectSelectionPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
-        <h1 className="text-3xl font-bold text-teal-700 tracking-tight">
+        <h1 className="text-3xl font-bold text-blue-800 tracking-tight">
           Choose Subject
         </h1>
         <p className="text-gray-600 mt-2">
           Select a subject area, then browse committee-approved{" "}
-          <span className="font-medium text-teal-800">practice tests</span> or open your assigned{" "}
-          <span className="font-medium text-teal-800">test session</span>.
+          <span className="font-medium text-blue-900">practice tests</span> or open your assigned{" "}
+          <span className="font-medium text-blue-900">test session</span>.
         </p>
       </header>
 
@@ -84,9 +84,9 @@ export default function SubjectSelectionPage() {
             <Link
               key={subject}
               href={`/practice-tests?subject=${encodeURIComponent(subject)}`}
-              className="block rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 px-5 py-4 shadow-sm transition"
+              className="block rounded-xl border border-blue-300 bg-blue-100 hover:bg-blue-200 px-5 py-4 shadow-sm transition"
             >
-              <span className="text-teal-900 font-semibold">{subject}</span>
+              <span className="text-blue-950 font-semibold">{subject}</span>
             </Link>
           ))}
         </div>

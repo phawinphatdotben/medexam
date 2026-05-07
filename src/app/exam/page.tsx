@@ -17,7 +17,7 @@ function ExamLegacyRedirectInner() {
   }, [router, searchParams]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white text-teal-700 font-medium">
+    <div className="min-h-screen flex items-center justify-center bg-white text-blue-800 font-medium">
       Redirecting to practice tests…
     </div>
   );
@@ -27,7 +27,7 @@ export default function ExamLobbyRedirectPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-white text-teal-700">
+        <div className="min-h-screen flex items-center justify-center bg-white text-blue-800">
           Loading…
         </div>
       }

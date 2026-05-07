@@ -408,7 +408,7 @@ export default function AdminRoleManagementPage() {
                       <td className="px-6 py-4 border-b border-gray-100">
                         <button
                           type="button"
-                          className="border border-amber-700 bg-amber-700 text-white rounded px-3 py-1.5 text-sm font-semibold whitespace-nowrap"
+                          className="border border-orange-800 bg-orange-800 text-white rounded px-3 py-1.5 text-sm font-semibold whitespace-nowrap"
                           disabled={pwResetting === profile.id}
                           onClick={() => void resetPasswordToDefault(profile.id)}
                           title="Sets this user’s password to 123456"

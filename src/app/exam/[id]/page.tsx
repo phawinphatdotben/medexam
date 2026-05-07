@@ -406,7 +406,7 @@ export default function StudentMeqExamPage() {
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="flex flex-col items-center">
           <svg
-            className="animate-spin h-8 w-8 text-teal-600 mb-3"
+            className="animate-spin h-8 w-8 text-blue-900 mb-3"
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
@@ -414,7 +414,7 @@ export default function StudentMeqExamPage() {
             <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
-          <span className="text-teal-700 text-lg font-medium">Loading exam...</span>
+          <span className="text-blue-800 text-lg font-medium">Loading exam...</span>
         </div>
       </div>
     );
@@ -445,7 +445,7 @@ export default function StudentMeqExamPage() {
                 type="button"
                 onClick={() => void handleRetake()}
                 disabled={saving}
-                className="bg-teal-700 text-white px-5 py-2 rounded-lg font-semibold hover:bg-teal-800 disabled:opacity-60"
+                className="bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold hover:bg-blue-900 disabled:opacity-60"
               >
                 {saving ? "Resetting..." : "Retake (practice) — previous answers kept beside next attempt"}
               </button>
@@ -471,10 +471,10 @@ export default function StudentMeqExamPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
-        <h1 className="text-3xl font-bold text-teal-700 tracking-tight">
+        <h1 className="text-3xl font-bold text-blue-800 tracking-tight">
           {test.subject} <span className="text-lg font-medium text-gray-500">({test.course_code})</span>
           {test.test_function === "practice" ? (
-            <span className="ml-2 text-sm font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+            <span className="ml-2 text-sm font-semibold text-orange-900 bg-orange-200 px-2 py-0.5 rounded">
               Practice
             </span>
           ) : (
@@ -486,14 +486,14 @@ export default function StudentMeqExamPage() {
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm font-medium">
           <span className="text-gray-800">
             Time on this exam:{" "}
-            <span className="tabular-nums text-teal-800">{formatCountdown(elapsedSessionSeconds)}</span>
+            <span className="tabular-nums text-blue-900">{formatCountdown(elapsedSessionSeconds)}</span>
           </span>
           {overallRemainingSeconds != null ? (
             <span className="text-gray-800">
               Overall time remaining:{" "}
               <span
                 className={`tabular-nums ${
-                  overallRemainingSeconds <= 120 ? "text-red-600 font-semibold" : "text-teal-800"
+                  overallRemainingSeconds <= 120 ? "text-red-600 font-semibold" : "text-blue-900"
                 }`}
               >
                 {formatCountdown(overallRemainingSeconds)}
@@ -505,7 +505,7 @@ export default function StudentMeqExamPage() {
       </header>
 
       <main className="flex-1 w-full max-w-xl mx-auto mt-8 px-4 flex flex-col gap-8">
-        <section className="bg-teal-50 border border-teal-200 rounded-xl shadow-sm p-6 mb-2 space-y-3">
+        <section className="bg-blue-100 border border-blue-300 rounded-xl shadow-sm p-6 mb-2 space-y-3">
           {test.first_page_stem ? (
             <p className="text-gray-800 text-base whitespace-pre-line">{test.first_page_stem}</p>
           ) : null}
@@ -513,7 +513,7 @@ export default function StudentMeqExamPage() {
         </section>
 
         <section className="bg-white border border-gray-100 rounded-xl shadow px-6 py-8 flex flex-col gap-4">
-          <div className="text-sm text-teal-600 mb-2 font-semibold">
+          <div className="text-sm text-blue-900 mb-2 font-semibold">
             Stage {currentStageIndex + 1} of {stages.length}
             {isCurrentLocked ? " — submitted" : ""}
           </div>
@@ -521,7 +521,7 @@ export default function StudentMeqExamPage() {
             {remainingSeconds != null ? (
               <>
                 Time left for this stage:{" "}
-                <span className={`tabular-nums ${remainingSeconds <= 30 ? "text-red-600" : "text-teal-700"}`}>
+                <span className={`tabular-nums ${remainingSeconds <= 30 ? "text-red-600" : "text-blue-800"}`}>
                   {formatCountdown(remainingSeconds)}
                 </span>
               </>
@@ -533,7 +533,7 @@ export default function StudentMeqExamPage() {
           </div>
 
           {currentStage.stage_information ? (
-            <div className="text-base text-gray-800 whitespace-pre-line border-l-2 border-teal-300 pl-3 mb-2">
+            <div className="text-base text-gray-800 whitespace-pre-line border-l-2 border-blue-400 pl-3 mb-2">
               {currentStage.stage_information}
             </div>
           ) : null}
@@ -580,7 +580,7 @@ export default function StudentMeqExamPage() {
           >
             <textarea
               id="stage-answer"
-              className="w-full px-4 py-3 border border-teal-300 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-teal-400 text-base bg-white placeholder-teal-200 resize-y min-h-[160px] disabled:opacity-70"
+              className="w-full px-4 py-3 border border-blue-400 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-blue-500 text-base bg-white placeholder-blue-300 resize-y min-h-[160px] disabled:opacity-70"
               placeholder="Type your answer here…"
               value={currentAnswer}
               onChange={(e) => setCurrentAnswer(e.target.value)}
@@ -588,8 +588,8 @@ export default function StudentMeqExamPage() {
               readOnly={isCurrentLocked}
             />
             {test.test_function === "practice" && lastPracticeByStage[currentStage.id] ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
-                <div className="font-semibold text-amber-900 mb-2">Previous attempt (reference)</div>
+              <div className="rounded-md border border-orange-300 bg-orange-100 p-4 text-sm">
+                <div className="font-semibold text-orange-950 mb-2">Previous attempt (reference)</div>
                 <div className="text-gray-800 whitespace-pre-wrap font-mono text-sm">
                   {lastPracticeByStage[currentStage.id]}
                 </div>
@@ -604,7 +604,7 @@ export default function StudentMeqExamPage() {
           ) : null}
 
           <button
-            className={`mt-4 bg-teal-700 text-white text-lg font-semibold px-8 py-4 rounded-lg shadow hover:bg-teal-800 transition border border-teal-700
+            className={`mt-4 bg-blue-800 text-white text-lg font-semibold px-8 py-4 rounded-lg shadow hover:bg-blue-900 transition border border-blue-800
               ${saving ? "opacity-60 cursor-not-allowed" : ""}
             `}
             onClick={() => void handleSubmitAnswer(false)}
