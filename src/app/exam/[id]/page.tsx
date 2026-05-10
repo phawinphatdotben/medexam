@@ -321,7 +321,9 @@ export default function StudentMeqExamPage() {
     };
     setByStage(next);
     setSaving(false);
-    setRemainingSeconds(0);
+
+    // Do not set remainingSeconds to 0 here: the next unlocked stage briefly had
+    // remainingSeconds===0 before the countdown effect ran and fired auto-submit.
 
     if (currentStageIndex === stages.length - 1) {
       setComplete(true);
@@ -330,10 +332,12 @@ export default function StudentMeqExamPage() {
     setCurrentStageIndex((i) => i + 1);
   };
 
-  // Auto-submit when the stage timer reaches zero.
+  // Auto-submit only when countdown has actually elapsed (positive → zero).
+  // Avoid remainingSeconds === 0 right after navigating from a submitted stage —
+  // that falsely triggered submit on the next stage before its timer initialized.
   useEffect(() => {
     if (!currentStage || isCurrentLocked || saving) return;
-    if (remainingSeconds !== 0) return;
+    if (remainingSeconds == null || remainingSeconds > 0) return;
     void handleSubmitAnswer(true);
   }, [remainingSeconds, currentStage, isCurrentLocked, saving]);
 
