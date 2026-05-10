@@ -404,11 +404,19 @@ export default function StudentMeqExamPage() {
       setSaving(false);
       return;
     }
+    const stage0 = stages[0];
+    const stage0InitialSeconds =
+      stage0?.time_limit_minutes != null && stage0.time_limit_minutes > 0
+        ? stage0.time_limit_minutes * 60
+        : null;
+
     setLastPracticeByStage(nextPrev);
     setByStage({});
     setCurrentStageIndex(0);
     setCurrentAnswer("");
     setComplete(false);
+    // Must restore immediately: leaving 0 here while stage 1 is unlocked retriggers auto-submit-on-zero.
+    setRemainingSeconds(stage0InitialSeconds);
     examSessionStartRef.current = Date.now();
     setSessionTick((n) => n + 1);
     setSaving(false);
