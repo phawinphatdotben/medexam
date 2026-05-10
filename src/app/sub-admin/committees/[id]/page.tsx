@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
-import { committeeScopesMatchTest, type CommitteePurpose } from "@/lib/committeeScope";
+import {
+  committeePurposeLabel,
+  committeeScopesMatchTest,
+  type CommitteePurpose,
+} from "@/lib/committeeScope";
 
 type CommitteeRow = {
   id: string;
@@ -35,10 +39,14 @@ type ScopedTestRow = {
   review_status: string;
   committee_id: string | null;
   public_code: string | null;
+  created_by: string | null;
+  /** Resolved from profiles: name or email. */
+  creator_display: string;
 };
 
 export default function CommitteeDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const committeeId = typeof params.id === "string" ? params.id : "";
   const { ready: accessOk, loading: gateLoading, userId: myUserId, role: myRole } = useRoleGate(
     COMMITTEE_PAGE_ROLES,
@@ -56,6 +64,7 @@ export default function CommitteeDetailPage() {
   const [testsLoading, setTestsLoading] = useState(false);
 
   const canManage = myRole === "sub_admin" || myRole === "admin";
+  const canDeleteCommittee = myRole === "admin";
 
   const loadCommittee = useCallback(async () => {
     if (!committeeId || !accessOk) return;
@@ -113,24 +122,24 @@ export default function CommitteeDetailPage() {
     const { data: meq, error: e1 } = await supabase
       .from("meq_tests")
       .select(
-        "id, subject, course_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code",
+        "id, subject, course_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code, created_by",
       )
       .eq("course_code", cc)
       .eq("test_year", y);
     const { data: sba, error: e2 } = await supabase
       .from("sba_tests")
       .select(
-        "id, subject, subject_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code",
+        "id, subject, subject_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code, created_by",
       )
       .eq("subject_code", cc)
       .eq("test_year", y);
-    setTestsLoading(false);
     if (e1 || e2) {
+      setTestsLoading(false);
       setErr(e1?.message || e2?.message || "Could not load tests.");
       setScopedTests([]);
       return;
     }
-    const merged: ScopedTestRow[] = [
+    const rawMerged: Omit<ScopedTestRow, "creator_display">[] = [
       ...((meq || []) as Record<string, unknown>[]).map((r) => ({
         id: r.id as string,
         kind: "MEQ" as const,
@@ -142,6 +151,7 @@ export default function CommitteeDetailPage() {
         review_status: r.review_status as string,
         committee_id: (r.committee_id as string | null) ?? null,
         public_code: (r.public_code as string | null) ?? null,
+        created_by: (r.created_by as string | null) ?? null,
       })),
       ...((sba || []) as Record<string, unknown>[]).map((r) => ({
         id: r.id as string,
@@ -154,6 +164,7 @@ export default function CommitteeDetailPage() {
         review_status: r.review_status as string,
         committee_id: (r.committee_id as string | null) ?? null,
         public_code: (r.public_code as string | null) ?? null,
+        created_by: (r.created_by as string | null) ?? null,
       })),
     ].filter((t) =>
       committeeScopesMatchTest({
@@ -166,10 +177,37 @@ export default function CommitteeDetailPage() {
         assessmentPurpose: t.assessment_purpose,
       }),
     );
-    merged.sort(
-      (a, b) =>
-        a.kind.localeCompare(b.kind) || a.subject.localeCompare(b.subject) || a.id.localeCompare(b.id),
-    );
+
+    const creatorIds = [
+      ...new Set(rawMerged.map((t) => t.created_by).filter((id): id is string => !!id)),
+    ];
+    let labelByProfileId = new Map<string, string>();
+    if (creatorIds.length > 0) {
+      const { data: creators, error: pe } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", creatorIds);
+      if (pe) setErr(pe.message);
+      labelByProfileId = new Map(
+        ((creators as { id: string; email: string; full_name: string | null }[] | null) || []).map((p) => [
+          p.id,
+          (p.full_name?.trim() || p.email || p.id) as string,
+        ]),
+      );
+    }
+
+    const merged: ScopedTestRow[] = rawMerged
+      .map((t) => ({
+        ...t,
+        creator_display: t.created_by
+          ? labelByProfileId.get(t.created_by) ?? "Unknown educator"
+          : "—",
+      }))
+      .sort(
+        (a, b) =>
+          a.kind.localeCompare(b.kind) || a.subject.localeCompare(b.subject) || a.id.localeCompare(b.id),
+      );
+    setTestsLoading(false);
     setScopedTests(merged);
   }, [committee]);
 
@@ -212,11 +250,13 @@ export default function CommitteeDetailPage() {
 
   const dutySummary = useMemo(() => {
     if (!committee) return "";
-    const track =
-      committee.purpose === "formative"
-        ? "Practice / formative-style MEQ & SBA tests"
-        : "Real-test / summative MEQ & SBA examinations";
-    return `${track} for catalog code ${committee.course_code}, academic year ${committee.test_year}.`;
+    if (committee.purpose === "practice") {
+      return `Practice pool MEQ & SBA tests for catalog code ${committee.course_code}, academic year ${committee.test_year}.`;
+    }
+    if (committee.purpose === "formative") {
+      return `Real exams marked formative (lower-stakes) for catalog code ${committee.course_code}, academic year ${committee.test_year}.`;
+    }
+    return `Real summative MEQ & SBA examinations for catalog code ${committee.course_code}, academic year ${committee.test_year}.`;
   }, [committee]);
 
   const addMember = async (profileId: string) => {
@@ -235,6 +275,23 @@ export default function CommitteeDetailPage() {
     setSearch("");
     setSearchResults([]);
     await loadMembers();
+  };
+
+  const deleteCommittee = async () => {
+    if (!canDeleteCommittee || !committeeId) return;
+    const confirmed = window.confirm(
+      `Delete this committee group? It must not be referenced by SBA review bundles. Tests will unlink; new committees sync when tests are saved.`,
+    );
+    if (!confirmed) return;
+    setSaving("delete-committee");
+    setErr(null);
+    const { error } = await supabase.from("committees").delete().eq("id", committeeId);
+    setSaving(null);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    router.push("/sub-admin");
   };
 
   const removeMember = async (profileId: string) => {
@@ -277,10 +334,19 @@ export default function CommitteeDetailPage() {
               <span className="text-slate-500">
                 {" "}
                 · Code <span className="font-mono">{committee.course_code}</span> · Year{" "}
-                {committee.test_year} ·{" "}
-                {committee.purpose === "formative" ? "Formative" : "Summative"}
+                {committee.test_year} · {committeePurposeLabel(committee.purpose)}
               </span>
             </p>
+          )}
+          {committee && canDeleteCommittee && (
+            <button
+              type="button"
+              onClick={() => void deleteCommittee()}
+              disabled={saving === "delete-committee"}
+              className="mt-3 text-sm text-red-700 font-semibold hover:underline disabled:opacity-40"
+            >
+              Delete committee group (admin only)
+            </button>
           )}
         </div>
 
@@ -289,7 +355,7 @@ export default function CommitteeDetailPage() {
           <p className="mt-1">{dutySummary || "Loading…"}</p>
           <p className="mt-2 text-blue-900/90">
             Use the test list below and the main <strong>Assigned tests</strong> tab to open Angoff and committee
-            scores. Everything listed here matches this group&apos;s code, year, and formative/summative track.
+            scores. Everything listed here matches this group&apos;s code, year, and practice / formative / summative track.
           </p>
         </section>
 
@@ -298,7 +364,7 @@ export default function CommitteeDetailPage() {
           <h2 className="font-semibold text-lg mb-1">Tests in this group</h2>
           <p className="text-xs text-gray-600 mb-4">
             MEQ and SBA exams that share this committee&apos;s catalog code ({committee.course_code}), year (
-            {committee.test_year}), and track ({committee.purpose === "formative" ? "formative" : "summative"}).
+            {committee.test_year}), and track ({committeePurposeLabel(committee.purpose)}).
             Assignment shows whether this group is linked on the test row (sub-admins set that on{" "}
             <Link href="/sub-admin" className="text-blue-600 hover:underline">
               Assigned tests
@@ -316,6 +382,7 @@ export default function CommitteeDetailPage() {
                   <th className="py-2 pr-3">Type</th>
                   <th className="py-2 pr-3">Test ID</th>
                   <th className="py-2 pr-3">Subject / track</th>
+                  <th className="py-2 pr-3">Created by</th>
                   <th className="py-2 pr-3">Status</th>
                   <th className="py-2 pr-3">Linked to this group</th>
                   <th className="py-2">Actions</th>
@@ -334,9 +401,12 @@ export default function CommitteeDetailPage() {
                         <div className="font-medium text-gray-900">{t.subject}</div>
                         <div className="text-xs text-gray-500">
                           {t.test_function === "practice"
-                            ? "Practice · formative"
-                            : `Real test · ${t.assessment_purpose}`}
+                            ? "Practice"
+                            : `Real · ${t.assessment_purpose}`}
                         </div>
+                      </td>
+                      <td className="py-2 pr-3 text-xs text-gray-800 max-w-[220px]">
+                        <span className="break-words">{t.creator_display}</span>
                       </td>
                       <td className="py-2 pr-3 text-xs">{t.review_status}</td>
                       <td className="py-2 pr-3">

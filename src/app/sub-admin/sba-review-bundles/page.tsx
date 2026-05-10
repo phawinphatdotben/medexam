@@ -5,7 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { getSessionUserId } from "@/lib/auth/session";
-import { committeeScopesMatchTest } from "@/lib/committeeScope";
+import { committeePurposeLabel, committeeScopesMatchTest } from "@/lib/committeeScope";
 import type { CommitteePurpose } from "@/lib/committeeScope";
 import { useRoleGate } from "@/hooks/useRoleGate";
 
@@ -92,6 +92,9 @@ export default function SbaReviewBundlesPage() {
     const y = parseInt(form.test_year, 10);
     if (!Number.isFinite(y) || !form.course_code.trim()) return [];
     const code = form.course_code.trim().toUpperCase();
+    const testFunction = form.assessment_purpose === "practice" ? "practice" : "real_test";
+    const assessmentPurpose: "formative" | "summative" =
+      form.assessment_purpose === "practice" ? "formative" : form.assessment_purpose;
     return committees.filter((c) =>
       committeeScopesMatchTest({
         committeeCourseCode: c.course_code,
@@ -99,8 +102,8 @@ export default function SbaReviewBundlesPage() {
         committeePurpose: c.purpose,
         testCourseCode: code,
         testYear: y,
-        testFunction: "real_test",
-        assessmentPurpose: form.assessment_purpose,
+        testFunction,
+        assessmentPurpose,
       }),
     );
   }, [committees, form.assessment_purpose, form.course_code, form.test_year]);
@@ -239,7 +242,8 @@ export default function SbaReviewBundlesPage() {
                   }
                 >
                   <option value="summative">Summative (real high-stakes)</option>
-                  <option value="formative">Formative (practice + real formative)</option>
+                  <option value="formative">Formative (real low-stakes)</option>
+                  <option value="practice">Practice (self-study pool)</option>
                 </select>
               </div>
               <div className="flex items-start gap-2">
@@ -309,7 +313,7 @@ export default function SbaReviewBundlesPage() {
                       {b.name}
                     </Link>
                     <div className="text-xs text-slate-600 mt-0.5">
-                      {b.course_code} · {b.test_year} · {b.assessment_purpose === "summative" ? "Summative" : "Formative"}{" "}
+                      {b.course_code} · {b.test_year} · {committeePurposeLabel(b.assessment_purpose)}{" "}
                       · committee {committeeNameById.get(b.committee_id) ?? b.committee_id}
                       {b.include_practice_in_pool ? " · pool includes practice SBAs" : ""}
                     </div>

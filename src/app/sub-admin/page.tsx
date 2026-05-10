@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS } from "@/lib/subjects";
-import { committeeScopesMatchTest } from "@/lib/committeeScope";
+import { committeePurposeLabel, committeeScopesMatchTest } from "@/lib/committeeScope";
+import type { CommitteePurpose } from "@/lib/committeeScope";
 
 type TestRow = {
   id: string;
@@ -28,7 +29,7 @@ type CommitteeRow = {
   subject: string | null;
   test_year: number;
   course_code: string;
-  purpose: "formative" | "summative";
+  purpose: CommitteePurpose;
 };
 
 type ScoreRow = {
@@ -65,8 +66,9 @@ export default function SubAdminPage() {
   const [newC, setNewC] = useState({
     course_code: "",
     test_year: String(new Date().getFullYear()),
-    purpose: "summative" as "formative" | "summative",
+    purpose: "summative" as CommitteePurpose,
   });
+  const [committeeCodeSearch, setCommitteeCodeSearch] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"review" | "scores">("review");
@@ -80,6 +82,16 @@ export default function SubAdminPage() {
   const [committeeScores, setCommitteeScores] = useState<Record<string, { average: number | null; count: number; mine: number | null }>>({});
   const [scoreInputs, setScoreInputs] = useState<Record<string, string>>({});
   const normalizedTestCodeSearch = testCodeSearch.trim().toLowerCase();
+  const normalizedCommitteeCodeSearch = committeeCodeSearch.trim().toLowerCase();
+  const filteredCommittees = useMemo(
+    () =>
+      committees.filter((c) =>
+        normalizedCommitteeCodeSearch
+          ? c.course_code.toLowerCase().includes(normalizedCommitteeCodeSearch)
+          : true,
+      ),
+    [committees, normalizedCommitteeCodeSearch],
+  );
   const filteredTests = tests.filter((t) =>
     normalizedTestCodeSearch ? t.subject_code.toLowerCase().includes(normalizedTestCodeSearch) : true
   );
@@ -209,9 +221,8 @@ export default function SubAdminPage() {
       return;
     }
     setSaving("committee");
-    const labelPurpose = newC.purpose === "summative" ? "Summative" : "Formative";
     const { error } = await supabase.from("committees").insert({
-      name: `${newC.course_code.trim()} · ${year} · ${labelPurpose}`,
+      name: `${newC.course_code.trim()} · ${year} · ${committeePurposeLabel(newC.purpose)}`,
       subject: null,
       course_code: newC.course_code.trim().toUpperCase(),
       test_year: year,
@@ -229,6 +240,23 @@ export default function SubAdminPage() {
       load();
     }
     setSaving(null);
+  };
+
+  const deleteCommitteeRow = async (committee: CommitteeRow) => {
+    if (myRole !== "admin") return;
+    const confirmed = window.confirm(
+      `Delete committee group "${committee.name}"? This cannot succeed if an SBA review bundle still references it. Tests unlink from this group; committee rows are recreated automatically when tests are saved.`,
+    );
+    if (!confirmed) return;
+    setSaving(`del-c-${committee.id}`);
+    setErr(null);
+    const { error } = await supabase.from("committees").delete().eq("id", committee.id);
+    setSaving(null);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    void load();
   };
 
   const committeesMatchingRow = (t: TestRow) =>
@@ -456,11 +484,10 @@ export default function SubAdminPage() {
         <section className="bg-white border rounded-lg p-6">
           <h2 className="font-semibold text-lg mb-3">New committee group</h2>
           <p className="text-sm text-gray-600 mb-3">
-            Scope is <strong>catalog course code</strong>, <strong>academic year</strong>, and{" "}
-            <strong>formative vs summative</strong>. Formative committees review{" "}
-            <strong>practice</strong> exams and <strong>real</strong> exams the faculty marks as
-            formative; summative committees review <strong>real</strong> exams marked summative. After
-            creating, open the group to <strong>assign members</strong> (search by name or email).
+            Scope is <strong>catalog course code</strong>, <strong>year</strong>, and{" "}
+            <strong>track</strong> (practice, formative real, summative real). A matching committee group is{" "}
+            <strong>created automatically</strong> whenever an MEQ or SBA test is submitted with those fields; you can
+            still pre-create empty groups below. Use <strong>Open</strong> to <strong>add members</strong> inside the group.
           </p>
           <form
             onSubmit={createCommittee}
@@ -496,17 +523,18 @@ export default function SubAdminPage() {
             <div>
               <label className="text-xs text-gray-600">Track</label>
               <select
-                className="w-full min-w-[140px] border rounded px-2 py-1.5"
+                className="w-full min-w-[160px] border rounded px-2 py-1.5"
                 value={newC.purpose}
                 onChange={(e) =>
                   setNewC((n) => ({
                     ...n,
-                    purpose: e.target.value as "formative" | "summative",
+                    purpose: e.target.value as CommitteePurpose,
                   }))
                 }
               >
-                <option value="summative">Summative (real high-stakes)</option>
-                <option value="formative">Formative (practice + real formative)</option>
+                <option value="summative">{committeePurposeLabel("summative")}</option>
+                <option value="formative">{committeePurposeLabel("formative")}</option>
+                <option value="practice">{committeePurposeLabel("practice")}</option>
               </select>
             </div>
             <button
@@ -521,24 +549,51 @@ export default function SubAdminPage() {
 
         <section className="bg-white border rounded-lg p-6">
           <h2 className="font-semibold text-lg mb-3">Committee groups</h2>
+          {myRole === "admin" && (
+            <div className="mb-4 max-w-sm">
+              <label className="text-xs text-gray-600 block">Search by subject / course code (admin)</label>
+              <input
+                className="w-full border rounded px-2 py-1.5 mt-0.5"
+                value={committeeCodeSearch}
+                onChange={(e) => setCommitteeCodeSearch(e.target.value)}
+                placeholder="e.g. CHMD 7404"
+              />
+            </div>
+          )}
           <ul className="space-y-3">
-            {committees.length === 0 ? (
-              <li className="text-gray-500 text-sm">No committees yet.</li>
+            {(myRole === "admin" ? filteredCommittees : committees).length === 0 ? (
+              <li className="text-gray-500 text-sm">
+                {myRole === "admin" && committeeCodeSearch.trim()
+                  ? "No committee groups match that code."
+                  : "No committees yet."}
+              </li>
             ) : (
-              committees.map((c) => (
+              (myRole === "admin" ? filteredCommittees : committees).map((c) => (
                 <li key={c.id} className="border rounded p-3 text-sm flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="font-medium">{c.name}</div>
                     <div className="text-gray-500 text-xs mt-0.5">
-                      {c.course_code} · {c.test_year} · {c.purpose === "summative" ? "Summative" : "Formative"}
+                      {c.course_code} · {c.test_year} · {committeePurposeLabel(c.purpose)}
                     </div>
                   </div>
-                  <Link
-                    href={`/sub-admin/committees/${c.id}`}
-                    className="text-blue-600 font-medium text-sm hover:underline whitespace-nowrap"
-                  >
-                    Open · assign members
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {myRole === "admin" && (
+                      <button
+                        type="button"
+                        onClick={() => void deleteCommitteeRow(c)}
+                        disabled={saving === `del-c-${c.id}`}
+                        className="text-red-700 font-medium text-sm hover:underline disabled:opacity-40"
+                      >
+                        Delete group
+                      </button>
+                    )}
+                    <Link
+                      href={`/sub-admin/committees/${c.id}`}
+                      className="text-blue-600 font-medium text-sm hover:underline whitespace-nowrap"
+                    >
+                      Open · assign members
+                    </Link>
+                  </div>
                 </li>
               ))
             )}
@@ -553,7 +608,7 @@ export default function SubAdminPage() {
           </h2>
           {!canEditCommitteeTests && (
             <p className="text-sm text-slate-600 mb-3">
-              You&apos;ll see tests that match your committee&apos;s catalog code, year, and track (formative vs summative),
+              You&apos;ll see tests that match your committee&apos;s catalog code, year, and track (practice / formative real / summative real),
               including tests not yet linked to a committee. Only tests explicitly assigned to your committee show the
               committee score controls when appropriate.
             </p>
@@ -599,8 +654,8 @@ export default function SubAdminPage() {
                       <span className="text-gray-500">·</span> {t.test_year}{" "}
                       <span className="text-gray-500">·</span>{" "}
                       {t.test_function === "practice"
-                        ? "Practice · formative"
-                        : `Real test · ${t.assessment_purpose}`}
+                        ? "Practice"
+                        : `Real · ${t.assessment_purpose}`}
                     </td>
                     <td className="py-2 pr-2">
                       <select

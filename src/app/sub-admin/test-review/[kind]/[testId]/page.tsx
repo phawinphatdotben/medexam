@@ -10,6 +10,27 @@ import { useRoleGate } from "@/hooks/useRoleGate";
 
 const REVIEW_STATUS_VALUES = ["pending_committee", "approved", "rejected"] as const;
 
+/** UI bucket for `test_function` + `assessment_purpose` (committee track). */
+type TestCategoryDraft = "practice" | "real_formative" | "real_summative";
+
+function testCategoryFromDb(
+  testFunction: string | null | undefined,
+  assessmentPurpose: string | null | undefined,
+): TestCategoryDraft {
+  if (testFunction === "practice") return "practice";
+  if (assessmentPurpose === "formative") return "real_formative";
+  return "real_summative";
+}
+
+function dbFromTestCategory(cat: TestCategoryDraft): {
+  test_function: "practice" | "real_test";
+  assessment_purpose: "formative" | "summative";
+} {
+  if (cat === "practice") return { test_function: "practice", assessment_purpose: "formative" };
+  if (cat === "real_formative") return { test_function: "real_test", assessment_purpose: "formative" };
+  return { test_function: "real_test", assessment_purpose: "summative" };
+}
+
 /** Option `id` strings from SBA options JSON (for correct-answer dropdown). */
 function parseOptionsJsonIds(optionsJson: string): string[] {
   try {
@@ -110,12 +131,14 @@ export default function CommitteeTestReviewPage() {
   const [testPublicCode, setTestPublicCode] = useState<string | null>(null);
   const [reviewStatusDraft, setReviewStatusDraft] =
     useState<(typeof REVIEW_STATUS_VALUES)[number]>("pending_committee");
+  const [testCategoryDraft, setTestCategoryDraft] = useState<TestCategoryDraft>("real_summative");
 
   const [savingOverview, setSavingOverview] = useState(false);
   const [savingStageId, setSavingStageId] = useState<string | null>(null);
   const [savingQuestionId, setSavingQuestionId] = useState<string | null>(null);
   const [savingSbaOverview, setSavingSbaOverview] = useState(false);
   const [savingReviewStatus, setSavingReviewStatus] = useState(false);
+  const [savingTestCategory, setSavingTestCategory] = useState(false);
   const [okMessage, setOkMessage] = useState<string | null>(null);
 
   const canEdit = myRole === "admin" || myRole === "sub_admin";
@@ -131,7 +154,7 @@ export default function CommitteeTestReviewPage() {
       const { data: test, error: te } = await supabase
         .from("meq_tests")
         .select(
-          "id, subject, course_code, vignette, first_page_stem, time_limit_minutes, review_status, public_code",
+          "id, subject, course_code, vignette, first_page_stem, time_limit_minutes, review_status, public_code, test_function, assessment_purpose",
         )
         .eq("id", testId)
         .maybeSingle();
@@ -158,6 +181,9 @@ export default function CommitteeTestReviewPage() {
         rs && REVIEW_STATUS_VALUES.includes(rs as (typeof REVIEW_STATUS_VALUES)[number])
           ? (rs as (typeof REVIEW_STATUS_VALUES)[number])
           : "pending_committee",
+      );
+      setTestCategoryDraft(
+        testCategoryFromDb(test.test_function as string | undefined, test.assessment_purpose as string | undefined),
       );
       const { data: st, error: se } = await supabase
         .from("meq_test_stages")
@@ -188,7 +214,9 @@ export default function CommitteeTestReviewPage() {
     } else {
       const { data: test, error: te } = await supabase
         .from("sba_tests")
-        .select("id, subject, subject_code, time_limit_minutes, review_status, public_code")
+        .select(
+          "id, subject, subject_code, time_limit_minutes, review_status, public_code, test_function, assessment_purpose",
+        )
         .eq("id", testId)
         .maybeSingle();
       if (te || !test) {
@@ -212,6 +240,9 @@ export default function CommitteeTestReviewPage() {
         rs && REVIEW_STATUS_VALUES.includes(rs as (typeof REVIEW_STATUS_VALUES)[number])
           ? (rs as (typeof REVIEW_STATUS_VALUES)[number])
           : "pending_committee",
+      );
+      setTestCategoryDraft(
+        testCategoryFromDb(test.test_function as string | undefined, test.assessment_purpose as string | undefined),
       );
       const { data: qs, error: qe } = await supabase
         .from("sba_test_questions")
@@ -486,6 +517,23 @@ export default function CommitteeTestReviewPage() {
     }
 
     setOkMessage(`Question ${prev.sequence_order} saved.`);
+    void load();
+  };
+
+  const saveTestCategory = async () => {
+    if (!canEdit || !kind || !testId) return;
+    setSavingTestCategory(true);
+    setErr(null);
+    setOkMessage(null);
+    const table = kind === "meq" ? "meq_tests" : "sba_tests";
+    const payload = dbFromTestCategory(testCategoryDraft);
+    const { error } = await supabase.from(table).update(payload).eq("id", testId);
+    setSavingTestCategory(false);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    setOkMessage("Test category saved. The matching committee group links automatically.");
     void load();
   };
 
@@ -972,6 +1020,52 @@ export default function CommitteeTestReviewPage() {
         {!loading && (kind === "meq" ? meqMeta : kind === "sba" ? sbaMeta : null) ? (
           <section className="bg-white border border-t-4 border-t-slate-800 rounded-lg p-5 text-sm space-y-4">
             <h2 className="font-semibold text-lg text-slate-900">Review decision</h2>
+            <div className="rounded-md border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+              <div>
+                <h3 className="font-semibold text-slate-900 text-sm">Test category (committee track)</h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Use this when a submission should move between practice pool, formative real, and summative real (for
+                  example after quality review). Saves update the automated committee assignment.
+                </p>
+              </div>
+              {canEdit ? (
+                <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                  <div className="flex-1 max-w-md">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                      Category
+                    </label>
+                    <select
+                      className="w-full border rounded-md px-3 py-2 bg-white"
+                      value={testCategoryDraft}
+                      onChange={(e) => setTestCategoryDraft(e.target.value as TestCategoryDraft)}
+                    >
+                      <option value="practice">Practice (self-study pool)</option>
+                      <option value="real_formative">Formative (real exam, lower stakes)</option>
+                      <option value="real_summative">Summative (real high-stakes)</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingTestCategory}
+                    onClick={() => void saveTestCategory()}
+                    className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                  >
+                    {savingTestCategory ? "Saving…" : "Save category"}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-slate-800 text-sm">
+                  Current category:{" "}
+                  <span className="font-semibold">
+                    {testCategoryDraft === "practice"
+                      ? "Practice"
+                      : testCategoryDraft === "real_formative"
+                        ? "Formative (real)"
+                        : "Summative (real)"}
+                  </span>
+                </p>
+              )}
+            </div>
             <p className="text-xs text-slate-600">
               Committee review status for this test record. Students only see real tests after status is{" "}
               <span className="font-medium">approved</span>.

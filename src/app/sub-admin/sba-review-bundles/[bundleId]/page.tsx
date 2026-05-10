@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
-import type { CommitteePurpose } from "@/lib/committeeScope";
+import { committeePurposeLabel, type CommitteePurpose } from "@/lib/committeeScope";
 
 type BundleRow = {
   id: string;
@@ -256,7 +256,7 @@ export default function SbaReviewBundleDetailPage() {
             <h1 className="text-2xl font-bold text-slate-900">{bundle?.name ?? "Review bundle"}</h1>
             {bundle ? (
               <p className="text-sm text-slate-600 mt-1">
-                {bundle.course_code} · Year {bundle.test_year} · {bundle.assessment_purpose === "summative" ? "Summative" : "Formative"}
+                {bundle.course_code} · Year {bundle.test_year} · {committeePurposeLabel(bundle.assessment_purpose)}
                 · Committee {committeeLabel}
                 {bundle.include_practice_in_pool ? " · pool includes practice SBAs" : ""}
               </p>

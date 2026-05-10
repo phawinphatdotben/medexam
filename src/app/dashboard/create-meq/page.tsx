@@ -487,8 +487,8 @@ export default function CreateMeqTestPage() {
                   <option value="formative">Formative (scheduled real exam)</option>
                 </select>
                 <p className="mt-1 text-xs text-gray-500">
-                  Matches committee groups: formative vs summative. Practice exams are always
-                  formative.
+                  Committee groups are matched by course code, year, and track: practice pool vs formative real vs
+                  summative real. A group is created automatically when you submit.
                 </p>
               </div>
             )}
