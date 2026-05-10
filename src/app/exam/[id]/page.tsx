@@ -233,7 +233,8 @@ export default function StudentMeqExamPage() {
       return;
     }
     if (isCurrentLocked) {
-      setRemainingSeconds(0);
+      // Do not use 0 — that looked like an expired timer in the floating bar. Submitted stages have no active countdown.
+      setRemainingSeconds(null);
       return;
     }
     if (stageTimeLimitMinutes == null || stageTimeLimitMinutes <= 0) {
@@ -537,6 +538,14 @@ export default function StudentMeqExamPage() {
           <p className="text-xs text-gray-500 -mt-1">
             Stage timers stay visible at the bottom of your screen while you scroll.
           </p>
+          {!isCurrentLocked &&
+          stageTimeLimitMinutes != null &&
+          stageTimeLimitMinutes > 0 ? (
+            <p className="text-sm text-blue-900 font-medium -mt-1">
+              This stage: {stageTimeLimitMinutes}-minute countdown (starts as soon as you reach this open stage;
+              see the bar at the bottom).
+            </p>
+          ) : null}
 
           {currentStage.stage_information ? (
             <div className="text-base text-gray-800 whitespace-pre-line border-l-2 border-blue-400 pl-3 mb-2">
@@ -644,7 +653,17 @@ export default function StudentMeqExamPage() {
               ) : null}
             </div>
             <div className="text-sm font-semibold text-gray-800 sm:text-right">
-              {remainingSeconds != null ? (
+              {isCurrentLocked ? (
+                <span className="font-normal text-gray-700 text-sm">
+                  <span className="text-gray-600 font-medium">This stage: </span>
+                  <span className="text-slate-900 font-semibold">submitted</span>
+                  {stageTimeLimitMinutes != null && stageTimeLimitMinutes > 0 ? (
+                    <span className="block sm:inline sm:ml-1 text-xs text-gray-500 font-normal">
+                      (when you can edit again, {stageTimeLimitMinutes} min countdown)
+                    </span>
+                  ) : null}
+                </span>
+              ) : remainingSeconds != null ? (
                 <>
                   <span className="text-gray-600 font-medium">This stage: </span>
                   <span
@@ -654,6 +673,11 @@ export default function StudentMeqExamPage() {
                   >
                     {formatCountdown(remainingSeconds)}
                   </span>
+                  {stageTimeLimitMinutes != null && stageTimeLimitMinutes > 0 ? (
+                    <span className="block text-xs text-gray-500 font-normal mt-0.5 sm:mt-0">
+                      of {stageTimeLimitMinutes} min for this stage
+                    </span>
+                  ) : null}
                 </>
               ) : (
                 <span className="font-normal text-gray-600 text-sm">
