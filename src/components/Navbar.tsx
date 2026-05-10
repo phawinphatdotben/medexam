@@ -81,9 +81,9 @@ export default function Navbar() {
         isActive: (p) => p.startsWith("/practice-tests"),
       });
       out.push({
-        href: "/test-session",
-        label: "Test session",
-        isActive: (p) => p.startsWith("/test-session"),
+        href: "/test-taking",
+        label: "Test taking",
+        isActive: (p) => p.startsWith("/test-taking") || p.startsWith("/test-session"),
       });
     }
     out.push({

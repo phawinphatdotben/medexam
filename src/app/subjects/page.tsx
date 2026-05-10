@@ -74,7 +74,7 @@ export default function SubjectSelectionPage() {
         <p className="text-gray-600 mt-2">
           Select a subject area, then browse committee-approved{" "}
           <span className="font-medium text-blue-900">practice tests</span> or open your assigned{" "}
-          <span className="font-medium text-blue-900">test session</span>.
+          <span className="font-medium text-blue-900">Test taking</span> list (shown when administrators enable it).
         </p>
       </header>
 

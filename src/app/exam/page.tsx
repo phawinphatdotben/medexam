@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 /**
  * Historical URL: exams by subject lived here.
- * Practice listings now live under /practice-tests; real tests show on /test-session for students.
+ * Practice listings live under /practice-tests; assigned real exams open from /test-taking when staff enable it.
  */
 function ExamLegacyRedirectInner() {
   const router = useRouter();

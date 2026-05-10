@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type MeqTest = {
@@ -14,7 +14,7 @@ type MeqTest = {
   test_function: "practice" | "real_test";
 };
 
-type Stage = {
+type DbStageRow = {
   id: string;
   meq_test_id: string;
   sequence_order: number;
@@ -22,23 +22,105 @@ type Stage = {
   stage_information: string | null;
   question_text: string;
   media_urls: string[] | null;
+  meq_stage_items:
+    | { id: string; meq_stage_id?: string; sequence_order: number; question_text: string; media_urls: string[] | null }[]
+    | null;
 };
 
-type ResponseRow = {
+type StageItem = {
+  id: string;
+  sequence_order: number;
+  question_text: string;
+  media_urls: string[] | null;
+};
+
+type Stage = DbStageRow & { itemsSorted: StageItem[] };
+
+function normalizeItems(stage: DbStageRow): StageItem[] {
+  const raw = stage.meq_stage_items;
+  const rows = Array.isArray(raw) ? raw : [];
+  return [...rows]
+    .sort((a, b) => a.sequence_order - b.sequence_order)
+    .map((r) => ({
+      id: r.id,
+      sequence_order: r.sequence_order,
+      question_text: r.question_text,
+      media_urls: r.media_urls ?? null,
+    }));
+}
+
+function buildStages(rows: DbStageRow[]): Stage[] {
+  const ordered = [...(rows || [])].sort((a, b) => a.sequence_order - b.sequence_order);
+  return ordered.map((s) => ({ ...s, itemsSorted: normalizeItems(s) }));
+}
+
+type SavedItemRow = {
   meq_stage_id: string;
+  meq_stage_item_id: string;
   answer_text: string | null;
   status: string;
 };
 
+const PRACTICE_MULTI_PREFIX = "{\"meq_multi\":";
+
+function serializePracticeAnswers(stage: Stage, draftByItem: Record<string, string>): string | null {
+  const items = stage.itemsSorted;
+  if (items.length === 0) return null;
+  const parts = items.map((it) => draftByItem[it.id]?.trim() ?? "");
+  if (parts.every((p) => !p)) return null;
+  if (items.length === 1) return parts[0] || null;
+  const map: Record<string, string> = {};
+  items.forEach((it, idx) => {
+    if (parts[idx]) map[it.id] = parts[idx]!;
+  });
+  return JSON.stringify({ meq_multi: true, parts: map });
+}
+
+function deserializePracticePrev(raw: string, items: StageItem[]): Record<string, string> | null {
+  const t = raw.trim();
+  if (!t) return {};
+  if (items.length <= 1) {
+    const only = items[0];
+    if (!only) return {};
+    return { [only.id]: raw };
+  }
+  if (!t.startsWith(PRACTICE_MULTI_PREFIX)) return null;
+  try {
+    const o = JSON.parse(t) as { meq_multi?: boolean; parts?: Record<string, string> };
+    if (o?.meq_multi && o.parts && typeof o.parts === "object") return o.parts;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Any item row for this stage is locked → treat stage complete (legacy compat). */
+function stageFullyLocked(stage: Stage, byItemId: Record<string, SavedItemRow | undefined>): boolean {
+  const items = stage.itemsSorted;
+  if (items.length === 0) return false;
+  return items.every((it) => byItemId[it.id]?.status === "locked");
+}
+
+function allStagesComplete(stagesArr: Stage[], byItemId: Record<string, SavedItemRow | undefined>): boolean {
+  return stagesArr.length > 0 && stagesArr.every((s) => stageFullyLocked(s, byItemId));
+}
+
+function firstOpenStageIndex(stagesArr: Stage[], byItemId: Record<string, SavedItemRow | undefined>): number {
+  const i = stagesArr.findIndex((s) => !stageFullyLocked(s, byItemId));
+  return i === -1 ? 0 : i;
+}
+
 export default function StudentMeqExamPage() {
   const { id: testId } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const assignmentId = searchParams.get("assignment")?.trim() || null;
   const [test, setTest] = useState<MeqTest | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
-  const [byStage, setByStage] = useState<Record<string, ResponseRow | undefined>>({});
+  const [byItemId, setByItemId] = useState<Record<string, SavedItemRow | undefined>>({});
+  const [draftByItem, setDraftByItem] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
-  const [currentAnswer, setCurrentAnswer] = useState("");
   const [saving, setSaving] = useState(false);
   const [complete, setComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,20 +129,6 @@ export default function StudentMeqExamPage() {
   const examSessionStartRef = useRef<number | null>(null);
   const [sessionTick, setSessionTick] = useState(0);
   const [lastPracticeByStage, setLastPracticeByStage] = useState<Record<string, string>>({});
-
-  const allLocked = useCallback(
-    (rows: Record<string, ResponseRow | undefined>, st: Stage[]) =>
-      st.length > 0 && st.every((s) => rows[s.id]?.status === "locked"),
-    []
-  );
-
-  const firstOpenIndex = useCallback(
-    (st: Stage[], rows: Record<string, ResponseRow | undefined>) => {
-      const i = st.findIndex((s) => rows[s.id]?.status !== "locked");
-      return i === -1 ? 0 : i;
-    },
-    []
-  );
 
   useEffect(() => {
     let isMounted = true;
@@ -87,7 +155,7 @@ export default function StudentMeqExamPage() {
       const { data: testData, error: testErr } = await supabase
         .from("meq_tests")
         .select(
-          "id, subject, course_code, first_page_stem, vignette, time_limit_minutes, review_status, test_year, test_function"
+          "id, subject, course_code, first_page_stem, vignette, time_limit_minutes, review_status, test_year, test_function",
         )
         .eq("id", testId)
         .maybeSingle();
@@ -96,7 +164,7 @@ export default function StudentMeqExamPage() {
         if (isMounted) {
           setError(
             me?.role === "student"
-              ? "This exam could not be loaded. Practice MEQ/SBA items must be approved; real exams only open from your Test session if an admin assigned them."
+              ? "This exam could not be loaded. Practice MEQ/SBA items must be approved; real exams only open from Test taking if an admin assigned them."
               : "Could not load this exam.",
           );
           setLoading(false);
@@ -127,33 +195,73 @@ export default function StudentMeqExamPage() {
       const { data: stageData, error: stageErr } = await supabase
         .from("meq_test_stages")
         .select(
-          "id, meq_test_id, sequence_order, time_limit_minutes, stage_information, question_text, media_urls"
+          `
+          id, meq_test_id, sequence_order, time_limit_minutes, stage_information, question_text, media_urls,
+          meq_stage_items ( id, sequence_order, question_text, media_urls )
+        `,
         )
         .eq("meq_test_id", testId)
         .order("sequence_order", { ascending: true });
 
       if (stageErr) {
         if (isMounted) {
-          setError("Could not load exam stages.");
+          setError(
+            stageErr.message?.includes("meq_stage_items") || stageErr.code === "PGRST200"
+              ? "Database needs migration 036 (MEQ stage items). Ask an admin to apply Supabase migrations."
+              : "Could not load exam stages.",
+          );
           setLoading(false);
         }
         return;
       }
-      const st = stageData || [];
+      const rawStages = stageData || [];
+      const st = buildStages(rawStages as DbStageRow[]);
+      const flatItemIds = st.flatMap((s) => s.itemsSorted.map((i) => i.id));
       const stageIds = st.map((s) => s.id);
       const isPractice = testData.test_function === "practice";
 
-      let resMap: Record<string, ResponseRow> = {};
-      if (stageIds.length > 0) {
+      const nextDraft: Record<string, string> = {};
+      let resMap: Record<string, SavedItemRow> = {};
+      if (flatItemIds.length > 0) {
         const { data: existing, error: resErr } = await supabase
           .from("meq_stage_responses")
-          .select("meq_stage_id, answer_text, status")
+          .select("meq_stage_id, meq_stage_item_id, answer_text, status")
           .eq("user_id", uid)
-          .in("meq_stage_id", stageIds);
-        if (!resErr && existing) {
+          .in("meq_stage_item_id", flatItemIds);
+
+        if (resErr) {
+          const msg =
+            resErr.code === "42703" ||
+            resErr.message?.includes("meq_stage_item_id") ||
+            resErr.message?.includes("column")
+              ? "Database needs migration 036 before you can take this exam."
+              : "Could not load saved answers.";
+          if (isMounted) {
+            setError(msg);
+            setLoading(false);
+          }
+          return;
+        }
+        if (existing) {
           resMap = Object.fromEntries(
-            existing.map((r) => [r.meq_stage_id, r as ResponseRow] as const)
+            existing.map((r) => [r.meq_stage_item_id, r as SavedItemRow] as const),
           );
+          for (const row of existing) {
+            if (row.answer_text != null) nextDraft[row.meq_stage_item_id] = row.answer_text;
+          }
+        }
+      }
+
+      let mergedOverallMin: number | null = testData.time_limit_minutes;
+      if (!isPractice && assignmentId) {
+        const { data: asgRow } = await supabase
+          .from("staff_test_assignments")
+          .select("exam_time_limit_minutes")
+          .eq("id", assignmentId)
+          .maybeSingle();
+        const cap = asgRow?.exam_time_limit_minutes;
+        if (cap != null && Number.isFinite(cap) && cap > 0) {
+          mergedOverallMin = cap;
         }
       }
 
@@ -166,7 +274,7 @@ export default function StudentMeqExamPage() {
           .in("meq_stage_id", stageIds);
         if (snaps) {
           practicePrev = Object.fromEntries(
-            snaps.map((r) => [r.meq_stage_id, r.answer_text ?? ""] as const)
+            snaps.map((r) => [r.meq_stage_id, r.answer_text ?? ""] as const),
           );
         }
       }
@@ -178,20 +286,18 @@ export default function StudentMeqExamPage() {
           course_code: testData.course_code,
           first_page_stem: testData.first_page_stem,
           vignette: testData.vignette,
-          time_limit_minutes: testData.time_limit_minutes,
+          time_limit_minutes: mergedOverallMin,
           test_function: (testData.test_function as "practice" | "real_test" | null) ?? "real_test",
         });
         setStages(st);
-        setByStage(resMap);
+        setByItemId(resMap);
+        setDraftByItem(nextDraft);
         setLastPracticeByStage(practicePrev);
-        if (allLocked(resMap, st)) {
+        if (allStagesComplete(st, resMap)) {
           setComplete(true);
         } else {
           examSessionStartRef.current = Date.now();
-          // Practice: always open at stage 1 so prior locked attempts are reviewed in order
-          // ("Continue" per stage) instead of jumping to the first unlocked stage.
-          // Real tests: resume at the first stage that is not yet locked.
-          setCurrentStageIndex(isPractice ? 0 : firstOpenIndex(st, resMap));
+          setCurrentStageIndex(isPractice ? 0 : firstOpenStageIndex(st, resMap));
         }
         setLoading(false);
       }
@@ -201,11 +307,10 @@ export default function StudentMeqExamPage() {
     return () => {
       isMounted = false;
     };
-  }, [testId, router, allLocked, firstOpenIndex]);
+  }, [testId, router, assignmentId]);
 
   const currentStage = stages[currentStageIndex];
-  const currentSaved = currentStage ? byStage[currentStage.id] : undefined;
-  const isCurrentLocked = currentSaved?.status === "locked";
+  const isCurrentLocked = currentStage ? stageFullyLocked(currentStage, byItemId) : false;
   const stageTimeLimitMinutes = currentStage?.time_limit_minutes ?? null;
 
   const overallLimitMin = test?.time_limit_minutes ?? null;
@@ -219,21 +324,12 @@ export default function StudentMeqExamPage() {
     return Math.max(0, overallLimitMin * 60 - elapsedSessionSeconds);
   }, [overallLimitMin, elapsedSessionSeconds]);
 
-  // Keep textarea in sync with stage and saved state
-  useEffect(() => {
-    if (currentStage) {
-      setCurrentAnswer(byStage[currentStage.id]?.answer_text ?? "");
-    }
-  }, [currentStage, byStage, currentStageIndex]);
-
-  // Reset per-stage countdown whenever the active stage changes.
   useEffect(() => {
     if (!currentStage) {
       setRemainingSeconds(null);
       return;
     }
     if (isCurrentLocked) {
-      // Do not use 0 — that looked like an expired timer in the floating bar. Submitted stages have no active countdown.
       setRemainingSeconds(null);
       return;
     }
@@ -244,7 +340,6 @@ export default function StudentMeqExamPage() {
     setRemainingSeconds(stageTimeLimitMinutes * 60);
   }, [currentStage, stageTimeLimitMinutes, isCurrentLocked]);
 
-  // Tick down once per second while this stage is active and unlocked.
   useEffect(() => {
     if (saving || isCurrentLocked || remainingSeconds == null || remainingSeconds <= 0) return;
     const interval = window.setInterval(() => {
@@ -256,14 +351,13 @@ export default function StudentMeqExamPage() {
     return () => window.clearInterval(interval);
   }, [saving, isCurrentLocked, remainingSeconds]);
 
-  // Session clock: elapsed always; drives re-render for overall countdown.
   useEffect(() => {
-    if (complete || !test || allLocked(byStage, stages)) return;
+    if (complete || !test || allStagesComplete(stages, byItemId)) return;
     const id = window.setInterval(() => {
       setSessionTick((n) => n + 1);
     }, 1000);
     return () => window.clearInterval(id);
-  }, [complete, test, byStage, stages, allLocked]);
+  }, [complete, test, byItemId, stages]);
 
   const formatCountdown = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60);
@@ -271,79 +365,105 @@ export default function StudentMeqExamPage() {
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const handleSubmitAnswer = async (forceSubmit = false) => {
-    if (!currentStage) return;
-    if (!userId) {
-      setError("User not authenticated. Please log in again.");
-      return;
-    }
-
-    if (isCurrentLocked) {
-      if (currentStageIndex < stages.length - 1) {
-        setCurrentStageIndex((i) => i + 1);
-      } else {
-        setComplete(true);
+  const handleSubmitAnswer = useCallback(
+    async (forceSubmit = false) => {
+      if (!currentStage) return;
+      if (!userId) {
+        setError("User not authenticated. Please log in again.");
+        return;
       }
-      return;
-    }
 
-    const answerText = currentAnswer.trim();
-    if (!forceSubmit && !answerText) {
-      setError("Please enter your answer before submitting.");
-      return;
-    }
+      if (isCurrentLocked) {
+        if (currentStageIndex < stages.length - 1) {
+          setCurrentStageIndex((i) => i + 1);
+        } else {
+          setComplete(true);
+        }
+        return;
+      }
 
-    setSaving(true);
-    setError(null);
+      const itemsLocal = currentStage.itemsSorted;
+      if (itemsLocal.length === 0) {
+        setError("This stage has no questions configured.");
+        return;
+      }
 
-    const { error: saveError } = await supabase.from("meq_stage_responses").upsert(
-      {
+      for (let i = 0; i < itemsLocal.length; i++) {
+        const it = itemsLocal[i]!;
+        const text = (draftByItem[it.id] ?? "").trim();
+        if (!forceSubmit && !text) {
+          setError(
+            `Please answer every part before submitting (missing part ${i + 1} of ${itemsLocal.length}).`,
+          );
+          return;
+        }
+      }
+
+      setSaving(true);
+      setError(null);
+
+      const rows = itemsLocal.map((it) => ({
         meq_stage_id: currentStage.id,
+        meq_stage_item_id: it.id,
         user_id: userId,
-        answer_text: answerText || null,
+        answer_text: (draftByItem[it.id] ?? "").trim() || null,
         status: "locked" as const,
-        // New attempt replaces old graded result; latest submission is source of truth.
         human_override_score: null,
         ai_rationale_feedback: null,
-      },
-      { onConflict: "user_id,meq_stage_id" }
-    );
+        graded_by: null,
+        graded_at: null,
+        grading_history: [] as unknown[],
+      }));
 
-    if (saveError) {
-      setError("Failed to save your answer. Please try again.");
+      const { error: saveError } = await supabase.from("meq_stage_responses").upsert(rows, {
+        onConflict: "user_id,meq_stage_item_id",
+      });
+
+      if (saveError) {
+        setError(
+          saveError.message?.includes("grading_history")
+            ? "Database needs migration 036 (grading_history column). Ask an admin to apply migrations."
+            : "Failed to save your answer. Please try again.",
+        );
+        setSaving(false);
+        return;
+      }
+
+      setByItemId((prev) => {
+        const next = { ...prev };
+        for (const it of itemsLocal) {
+          next[it.id] = {
+            meq_stage_id: currentStage.id,
+            meq_stage_item_id: it.id,
+            answer_text: (draftByItem[it.id] ?? "").trim() || null,
+            status: "locked",
+          };
+        }
+        return next;
+      });
       setSaving(false);
-      return;
-    }
 
-    const next = {
-      ...byStage,
-      [currentStage.id]: {
-        meq_stage_id: currentStage.id,
-        answer_text: answerText,
-        status: "locked",
-      },
-    };
-    setByStage(next);
-    setSaving(false);
+      if (currentStageIndex === stages.length - 1) {
+        setComplete(true);
+        return;
+      }
+      setCurrentStageIndex((i) => i + 1);
+    },
+    [
+      currentStage,
+      userId,
+      isCurrentLocked,
+      currentStageIndex,
+      stages.length,
+      draftByItem,
+    ],
+  );
 
-    // Do not set remainingSeconds to 0 here: the next unlocked stage briefly had
-    // remainingSeconds===0 before the countdown effect ran and fired auto-submit.
-
-    if (currentStageIndex === stages.length - 1) {
-      setComplete(true);
-      return;
-    }
-    setCurrentStageIndex((i) => i + 1);
-  };
-
-  // Auto-submit only when countdown has actually elapsed (positive → zero).
-  // Avoid remainingSeconds === 0 right after navigating from a submitted stage —
-  // that falsely triggered submit on the next stage before its timer initialized.
   useEffect(() => {
     if (!currentStage || isCurrentLocked || saving) return;
     if (remainingSeconds == null || remainingSeconds > 0) return;
     void handleSubmitAnswer(true);
-  }, [remainingSeconds, currentStage, isCurrentLocked, saving]);
+  }, [remainingSeconds, currentStage, isCurrentLocked, saving, handleSubmitAnswer]);
 
   const isPractice = test?.test_function === "practice";
 
@@ -355,12 +475,12 @@ export default function StudentMeqExamPage() {
 
     const archiveRows = stages
       .map((s) => {
-        const row = byStage[s.id];
-        if (!row?.answer_text?.trim()) return null;
+        const snap = serializePracticeAnswers(s, draftByItem);
+        if (!snap?.trim()) return null;
         return {
           user_id: userId,
           meq_stage_id: s.id,
-          answer_text: row.answer_text,
+          answer_text: snap,
           captured_at: new Date().toISOString(),
         };
       })
@@ -379,7 +499,7 @@ export default function StudentMeqExamPage() {
         setError(
           snapErr.message.includes("does not exist") || snapErr.message.includes("relation")
             ? "Database not updated yet (run migration 020). Cannot archive practice answers."
-            : "Could not save your previous attempt for reference."
+            : "Could not save your previous attempt for reference.",
         );
         setSaving(false);
         return;
@@ -400,7 +520,7 @@ export default function StudentMeqExamPage() {
       setError(
         delErr.message.includes("policy") || delErr.code === "42501"
           ? "Retake is only allowed for practice tests (or apply migration 020)."
-          : "Could not reset your attempt. Please try again."
+          : "Could not reset your attempt. Please try again.",
       );
       setSaving(false);
       return;
@@ -412,11 +532,10 @@ export default function StudentMeqExamPage() {
         : null;
 
     setLastPracticeByStage(nextPrev);
-    setByStage({});
+    setByItemId({});
+    setDraftByItem({});
     setCurrentStageIndex(0);
-    setCurrentAnswer("");
     setComplete(false);
-    // Must restore immediately: leaving 0 here while stage 1 is unlocked retriggers auto-submit-on-zero.
     setRemainingSeconds(stage0InitialSeconds);
     examSessionStartRef.current = Date.now();
     setSessionTick((n) => n + 1);
@@ -462,12 +581,20 @@ export default function StudentMeqExamPage() {
             Thank you for submitting your responses.
           </span>
           {test?.test_function === "practice" ? (
-            <div className="mt-6">
+            <div className="mt-6 space-y-3">
+              <button
+                type="button"
+                disabled
+                className="w-full border border-dashed border-slate-400 text-slate-600 font-semibold px-5 py-3 rounded-lg bg-slate-100 cursor-not-allowed text-sm"
+                title="Trainer model not selected yet; this will call your institution's AI endpoint when ready."
+              >
+                Request AI score (trained model) — coming soon
+              </button>
               <button
                 type="button"
                 onClick={() => void handleRetake()}
                 disabled={saving}
-                className="bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold hover:bg-blue-900 disabled:opacity-60"
+                className="w-full bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold hover:bg-blue-900 disabled:opacity-60"
               >
                 {saving ? "Resetting..." : "Retake (practice) — previous answers kept beside next attempt"}
               </button>
@@ -489,6 +616,11 @@ export default function StudentMeqExamPage() {
       </div>
     );
   }
+
+  const items = currentStage.itemsSorted;
+  const practiceSnapRaw = lastPracticeByStage[currentStage.id];
+  const practicePartsDecoded =
+    practiceSnapRaw && items.length ? deserializePracticePrev(practiceSnapRaw, items) : null;
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -536,7 +668,8 @@ export default function StudentMeqExamPage() {
 
         <section className="bg-white border border-gray-100 rounded-xl shadow px-6 py-8 flex flex-col gap-4">
           <p className="text-xs text-gray-500 -mt-1">
-            Stage timers stay visible at the bottom of your screen while you scroll.
+            Stage timers stay visible at the bottom of your screen while you scroll. This stage may include multiple
+            related questions answered together.
           </p>
           {!isCurrentLocked &&
           stageTimeLimitMinutes != null &&
@@ -552,65 +685,89 @@ export default function StudentMeqExamPage() {
               {currentStage.stage_information}
             </div>
           ) : null}
-          <div className="text-xl font-medium text-gray-900 mb-2 whitespace-pre-line">
-            {currentStage.question_text}
-          </div>
 
-          {currentStage.media_urls && currentStage.media_urls.length > 0 ? (
-            <div className="mb-3">
-              {/\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(currentStage.media_urls[0]!) ? (
-                <img
-                  src={currentStage.media_urls[0]!}
-                  alt="Stage media"
-                  className="rounded-lg max-h-64 w-auto mx-auto shadow"
-                />
-              ) : /^.*\.(mp4|webm|ogg)(\?|#|$)/i.test(currentStage.media_urls[0]!) ? (
-                <video
-                  src={currentStage.media_urls[0]!}
-                  controls
-                  className="rounded-lg max-h-64 w-full mx-auto shadow"
-                />
-              ) : (
-                <a
-                  href={currentStage.media_urls[0]!}
-                  className="text-blue-700 underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
+          {items.map((item, ii) => {
+            const pid = `meq-${item.id}`;
+            return (
+              <div key={item.id} className="border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
+                <div className="text-base font-semibold text-slate-800 mb-1">
+                  {items.length > 1 ? `Part ${ii + 1} of ${items.length}` : "Question"}
+                </div>
+                <div className="text-lg font-medium text-gray-900 mb-2 whitespace-pre-line">
+                  {item.question_text}
+                </div>
+                {item.media_urls && item.media_urls.length > 0 ? (
+                  <div className="mb-3">
+                    {/\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(item.media_urls[0]!) ? (
+                      <img
+                        src={item.media_urls[0]!}
+                        alt="Question media"
+                        className="rounded-lg max-h-64 w-auto mx-auto shadow"
+                      />
+                    ) : /^.*\.(mp4|webm|ogg)(\?|#|$)/i.test(item.media_urls[0]!) ? (
+                      <video
+                        src={item.media_urls[0]!}
+                        controls
+                        className="rounded-lg max-h-64 w-full mx-auto shadow"
+                      />
+                    ) : (
+                      <a
+                        href={item.media_urls[0]!}
+                        className="text-blue-700 underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        View media
+                      </a>
+                    )}
+                  </div>
+                ) : null}
+                <div
+                  className={
+                    test.test_function === "practice" &&
+                    practicePartsDecoded &&
+                    Object.keys(practicePartsDecoded).length > 0
+                      ? "grid grid-cols-1 lg:grid-cols-2 gap-4"
+                      : ""
+                  }
                 >
-                  View media
-                </a>
-              )}
-            </div>
-          ) : null}
-
-          <label htmlFor="stage-answer" className="block text-base font-semibold text-gray-700 mb-1">
-            Your answer
-          </label>
-          <div
-            className={
-              test.test_function === "practice" && lastPracticeByStage[currentStage.id]
-                ? "grid grid-cols-1 lg:grid-cols-2 gap-4"
-                : ""
-            }
-          >
-            <textarea
-              id="stage-answer"
-              className="w-full px-4 py-3 border border-blue-400 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-blue-500 text-base bg-white placeholder-blue-300 resize-y min-h-[160px] disabled:opacity-70"
-              placeholder="Type your answer here…"
-              value={currentAnswer}
-              onChange={(e) => setCurrentAnswer(e.target.value)}
-              disabled={saving || isCurrentLocked}
-              readOnly={isCurrentLocked}
-            />
-            {test.test_function === "practice" && lastPracticeByStage[currentStage.id] ? (
-              <div className="rounded-md border border-orange-300 bg-orange-100 p-4 text-sm">
-                <div className="font-semibold text-orange-950 mb-2">Previous attempt (reference)</div>
-                <div className="text-gray-800 whitespace-pre-wrap font-mono text-sm">
-                  {lastPracticeByStage[currentStage.id]}
+                  <div>
+                    <label htmlFor={pid} className="block text-base font-semibold text-gray-700 mb-1">
+                      Your answer{items.length > 1 ? ` (part ${ii + 1})` : ""}
+                    </label>
+                    <textarea
+                      id={pid}
+                      className="w-full px-4 py-3 border border-blue-400 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-blue-500 text-base bg-white placeholder-blue-300 resize-y min-h-[120px] disabled:opacity-70"
+                      placeholder="Type your answer here…"
+                      value={draftByItem[item.id] ?? ""}
+                      onChange={(e) =>
+                        setDraftByItem((d) => ({
+                          ...d,
+                          [item.id]: e.target.value,
+                        }))
+                      }
+                      disabled={saving || isCurrentLocked}
+                      readOnly={isCurrentLocked}
+                    />
+                  </div>
+                  {test.test_function === "practice" && practiceSnapRaw ? (
+                    <div className="rounded-md border border-orange-300 bg-orange-100 p-4 text-sm">
+                      <div className="font-semibold text-orange-950 mb-2">Previous attempt (reference)</div>
+                      {practicePartsDecoded && practicePartsDecoded[item.id]?.trim() ? (
+                        <div className="text-gray-800 whitespace-pre-wrap font-mono text-sm">
+                          {practicePartsDecoded[item.id]}
+                        </div>
+                      ) : !practicePartsDecoded && ii === 0 ? (
+                        <div className="text-gray-800 whitespace-pre-wrap font-mono text-sm">{practiceSnapRaw}</div>
+                      ) : practicePartsDecoded && !practicePartsDecoded[item.id]?.trim() ? (
+                        <span className="text-gray-500 italic text-xs">(No saved text for this part)</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-            ) : null}
-          </div>
+            );
+          })}
 
           {error ? (
             <div className="bg-red-50 text-red-700 border border-red-300 px-4 py-2 rounded text-base font-medium mb-2">
@@ -623,7 +780,7 @@ export default function StudentMeqExamPage() {
               ${saving ? "opacity-60 cursor-not-allowed" : ""}
             `}
             onClick={() => void handleSubmitAnswer(false)}
-            disabled={saving || (!isCurrentLocked && currentAnswer.trim() === "")}
+            disabled={saving}
             type="button"
           >
             {isCurrentLocked
@@ -633,8 +790,8 @@ export default function StudentMeqExamPage() {
               : saving
                 ? "Submitting…"
                 : currentStageIndex === stages.length - 1
-                  ? "Submit final answer and finish"
-                  : "Submit answer and continue"}
+                  ? "Submit answers and finish"
+                  : "Submit answers for this stage and continue"}
           </button>
         </section>
       </main>
@@ -648,9 +805,10 @@ export default function StudentMeqExamPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
             <div className="text-sm font-semibold text-blue-900">
               Stage {currentStageIndex + 1} of {stages.length}
-              {isCurrentLocked ? (
-                <span className="font-normal text-slate-600"> — submitted</span>
+              {items.length > 1 ? (
+                <span className="font-normal text-slate-700"> · {items.length} questions together</span>
               ) : null}
+              {isCurrentLocked ? <span className="font-normal text-slate-600"> — submitted</span> : null}
             </div>
             <div className="text-sm font-semibold text-gray-800 sm:text-right">
               {isCurrentLocked ? (

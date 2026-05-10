@@ -434,9 +434,14 @@ export default function SubAdminPage() {
             View scores
           </button>
         </div>
-        <Link href="/dashboard" className="text-blue-600 text-sm hover:underline">
-          &larr; Staff dashboard
-        </Link>
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm items-center">
+          <Link href="/dashboard" className="text-blue-600 hover:underline">
+            &larr; Staff dashboard
+          </Link>
+          <Link href="/sub-admin/sba-review-bundles" className="text-blue-600 hover:underline font-medium">
+            SBA committee review bundles
+          </Link>
+        </div>
 
         {err && (
           <div className="p-3 rounded border border-red-200 bg-red-50 text-red-800 text-sm">

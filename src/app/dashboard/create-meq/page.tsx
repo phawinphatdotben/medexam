@@ -11,16 +11,25 @@ import { SUBJECTS, type SubjectName } from "@/lib/subjects";
 import { downloadCsv, rowToCsvLine } from "@/lib/csvDownload";
 import { parseMeqStagesCsv } from "@/lib/parseMeqStagesCsv";
 
-type StageDraft = {
-  sequence_order: number;
-  time_limit_minutes: string;
-  /** Shown at this stage (labs, extra data) — separate from the question line. */
-  stage_information: string;
+type ItemDraft = {
   question_text: string;
   rubric_criteria: string;
   max_score: string;
   media_url: string;
 };
+
+type StageDraft = {
+  sequence_order: number;
+  time_limit_minutes: string;
+  /** Shown once at this stage (labs, extra data). */
+  stage_information: string;
+  /** Typed questions graded together before the learner advances. */
+  items: ItemDraft[];
+};
+
+function blankItemDraft(): ItemDraft {
+  return { question_text: "", rubric_criteria: "", max_score: "10", media_url: "" };
+}
 
 export default function CreateMeqTestPage() {
   const router = useRouter();
@@ -51,10 +60,7 @@ export default function CreateMeqTestPage() {
       sequence_order: 1,
       time_limit_minutes: "15",
       stage_information: "",
-      question_text: "",
-      rubric_criteria: "",
-      max_score: "10",
-      media_url: "",
+      items: [blankItemDraft()],
     },
   ]);
   const [saving, setSaving] = useState(false);
@@ -127,10 +133,14 @@ export default function CreateMeqTestPage() {
       sequence_order: r.sequence_order,
       time_limit_minutes: r.time_limit_minutes,
       stage_information: r.stage_information,
-      question_text: r.question_text,
-      rubric_criteria: r.rubric_criteria,
-      max_score: r.max_score,
-      media_url: r.media_url,
+      items: [
+        {
+          question_text: r.question_text,
+          rubric_criteria: r.rubric_criteria,
+          max_score: r.max_score,
+          media_url: r.media_url,
+        },
+      ],
     }));
     mapped.sort((a, b) => a.sequence_order - b.sequence_order);
     const normalized = mapped.map((s, i) => ({ ...s, sequence_order: i + 1 }));
@@ -144,17 +154,46 @@ export default function CreateMeqTestPage() {
         sequence_order: prev.length + 1,
         time_limit_minutes: "15",
         stage_information: "",
-        question_text: "",
-        rubric_criteria: "",
-        max_score: "10",
-        media_url: "",
+        items: [blankItemDraft()],
       },
     ]);
   };
 
-  const updateStage = (i: number, field: keyof StageDraft, value: string) => {
+  const updateStageShell = (i: number, field: "time_limit_minutes" | "stage_information", value: string) => {
+    setStages((prev) => prev.map((s, j) => (j === i ? { ...s, [field]: value } : s)));
+  };
+
+  const updateStageItem = (stageIdx: number, itemIdx: number, field: keyof ItemDraft, value: string) => {
     setStages((prev) =>
-      prev.map((s, j) => (j === i ? { ...s, [field]: value } : s))
+      prev.map((s, j) =>
+        j === stageIdx
+          ? {
+              ...s,
+              items: s.items.map((it, k) =>
+                k === itemIdx ? { ...it, [field]: value } : it,
+              ),
+            }
+          : s,
+      ),
+    );
+  };
+
+  const addQuestionToStage = (stageIdx: number) => {
+    setStages((prev) =>
+      prev.map((s, j) => (j === stageIdx ? { ...s, items: [...s.items, blankItemDraft()] } : s)),
+    );
+  };
+
+  const removeQuestionFromStage = (stageIdx: number, itemIdx: number) => {
+    setStages((prev) =>
+      prev.map((s, j) =>
+        j === stageIdx && s.items.length > 1
+          ? {
+              ...s,
+              items: s.items.filter((_, k) => k !== itemIdx),
+            }
+          : s,
+      ),
     );
   };
 
@@ -172,12 +211,8 @@ export default function CreateMeqTestPage() {
     }
     for (let i = 0; i < stages.length; i++) {
       const st = stages[i]!;
-      if (!st.question_text.trim()) {
-        setError(`Stage ${i + 1}: question text is required.`);
-        return;
-      }
-      if (!st.rubric_criteria.trim()) {
-        setError(`Stage ${i + 1}: rubric criteria is required.`);
+      if (!st.items.length) {
+        setError(`Stage ${i + 1}: add at least one question.`);
         return;
       }
       const tl = parseInt(st.time_limit_minutes, 10);
@@ -185,9 +220,26 @@ export default function CreateMeqTestPage() {
         setError(`Stage ${i + 1}: time limit (minutes) must be a positive number.`);
         return;
       }
-      const maxScore = parseInt(st.max_score, 10);
-      if (isNaN(maxScore) || maxScore < 1 || maxScore > 100) {
-        setError(`Stage ${i + 1}: max score must be between 1 and 100.`);
+      let partSum = 0;
+      for (let pi = 0; pi < st.items.length; pi++) {
+        const it = st.items[pi]!;
+        if (!it.question_text.trim()) {
+          setError(`Stage ${i + 1}, part ${pi + 1}: question text is required.`);
+          return;
+        }
+        if (!it.rubric_criteria.trim()) {
+          setError(`Stage ${i + 1}, part ${pi + 1}: rubric criteria is required.`);
+          return;
+        }
+        const mx = parseInt(it.max_score, 10);
+        if (isNaN(mx) || mx < 1 || mx > 100) {
+          setError(`Stage ${i + 1}, part ${pi + 1}: max score must be between 1 and 100.`);
+          return;
+        }
+        partSum += mx;
+      }
+      if (partSum > 1000) {
+        setError(`Stage ${i + 1}: combined part max (${partSum}) exceeds the database cap of 1000 — reduce scoring.`);
         return;
       }
     }
@@ -240,22 +292,75 @@ export default function CreateMeqTestPage() {
 
     const testId = testRow.id;
     const publicCode = (testRow as { id: string; public_code: string | null }).public_code ?? null;
-    const stageRows = stages.map((s, i) => ({
-      meq_test_id: testId,
-      sequence_order: i + 1,
-      time_limit_minutes: parseInt(s.time_limit_minutes, 10),
-      stage_information: s.stage_information.trim() || null,
-      question_text: s.question_text.trim(),
-      rubric_criteria: s.rubric_criteria.trim(),
-      max_score: parseInt(s.max_score, 10),
-      media_urls: s.media_url.trim() ? [s.media_url.trim()] : [],
-    }));
+
+    const stageRows = stages.map((s, i) => {
+      const parts = s.items.map((it, pi) => ({
+        qi: pi + 1,
+        qt: it.question_text.trim(),
+        rub: it.rubric_criteria.trim(),
+        mx: parseInt(it.max_score, 10),
+        mu: it.media_url.trim(),
+      }));
+      const question_text = parts.map((p) => `Part ${p.qi}: ${p.qt}`).join("\n\n");
+      const rubric_criteria = parts
+        .map((p) => `Part ${p.qi} (max ${p.mx} pts)\n${p.rub}`)
+        .join("\n\n\n");
+      const max_score = parts.reduce((n, p) => n + p.mx, 0);
+      const firstMedia = parts.find((p) => p.mu)?.mu;
+      return {
+        meq_test_id: testId,
+        sequence_order: i + 1,
+        time_limit_minutes: parseInt(s.time_limit_minutes, 10),
+        stage_information: s.stage_information.trim() || null,
+        question_text,
+        rubric_criteria,
+        max_score,
+        media_urls: firstMedia ? [firstMedia] : [],
+      };
+    });
 
     const { error: stErr } = await supabase.from("meq_test_stages").insert(stageRows);
+
     if (stErr) {
       setSaving(false);
       setError(stErr.message || "MEQ created but stages failed to save.");
       return;
+    }
+
+    const { data: insertedStages, error: refetchErr } = await supabase
+      .from("meq_test_stages")
+      .select("id, sequence_order")
+      .eq("meq_test_id", testId)
+      .order("sequence_order", { ascending: true });
+
+    if (refetchErr || !insertedStages || insertedStages.length !== stages.length) {
+      setSaving(false);
+      setError(refetchErr?.message || "MEQ stages could not be reloaded after insert.");
+      return;
+    }
+
+    for (let si = 0; si < stages.length; si++) {
+      const row = insertedStages[si];
+      const s = stages[si];
+      if (!row?.id || !s) continue;
+      const itemsPayload = s.items.map((it, pi) => ({
+        meq_stage_id: row.id,
+        sequence_order: pi + 1,
+        question_text: it.question_text.trim(),
+        rubric_criteria: it.rubric_criteria.trim(),
+        max_score: parseInt(it.max_score, 10),
+        media_urls: it.media_url.trim() ? [it.media_url.trim()] : [],
+      }));
+      const { error: itErr } = await supabase.from("meq_stage_items").insert(itemsPayload);
+      if (itErr) {
+        setSaving(false);
+        setError(
+          itErr.message.includes("relation") || itErr.code === "42P01"
+            ? "Run migration 036 (meq_stage_items) before creating tests with authored parts."
+            : itErr.message || "Stage saved but nested questions failed.",
+        );
+        return;
+      }
     }
 
     setSaving(false);
@@ -281,8 +386,8 @@ export default function CreateMeqTestPage() {
         </div>
         <h1 className="text-3xl font-bold text-blue-900 mb-1">Create MEQ test</h1>
         <p className="text-gray-600 text-sm mb-4">
-          First page shows the overall time limit and case. Students type answers; each stage can
-          have its own time limit.
+          First page shows the overall time limit and case. Inside each chronological stage students may answer
+          one or more graded free-text prompts together before advancing; each stage has its own countdown.
         </p>
         <div className="rounded-lg border border-blue-300 bg-blue-100/90 px-4 py-3 text-sm text-blue-950 mb-8 space-y-2">
           <p>
@@ -451,7 +556,7 @@ export default function CreateMeqTestPage() {
 
           <section className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <h2 className="font-semibold text-lg">Stages (typed student answers)</h2>
+              <h2 className="font-semibold text-lg">Stages</h2>
               <div className="flex flex-col gap-2 items-start">
                 <label className="text-sm font-medium text-gray-700">
                   Import stages from CSV
@@ -509,28 +614,18 @@ export default function CreateMeqTestPage() {
             {stages.map((st, i) => (
               <div
                 key={i}
-                className="border border-blue-200 rounded-lg p-4 bg-blue-50/30 space-y-3"
+                className="border border-blue-200 rounded-lg p-4 bg-blue-50/30 space-y-4"
               >
                 <h3 className="font-medium text-blue-900">Stage {i + 1}</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-sm text-gray-700">Time limit (minutes)</label>
+                    <label className="text-sm text-gray-700">Time limit (minutes, whole stage)</label>
                     <input
                       type="number"
                       min={1}
                       className="mt-1 w-full border rounded-md px-3 py-2"
                       value={st.time_limit_minutes}
-                      onChange={(e) => updateStage(i, "time_limit_minutes", e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-700">Media URL (optional)</label>
-                    <input
-                      type="url"
-                      className="mt-1 w-full border rounded-md px-3 py-2"
-                      value={st.media_url}
-                      onChange={(e) => updateStage(i, "media_url", e.target.value)}
-                      placeholder="https://"
+                      onChange={(e) => updateStageShell(i, "time_limit_minutes", e.target.value)}
                     />
                   </div>
                 </div>
@@ -541,41 +636,78 @@ export default function CreateMeqTestPage() {
                   <textarea
                     className="mt-1 w-full border rounded-md px-3 py-2 min-h-[72px]"
                     value={st.stage_information}
-                    onChange={(e) => updateStage(i, "stage_information", e.target.value)}
-                    placeholder="Optional — content revealed at this stage before the question."
+                    onChange={(e) => updateStageShell(i, "stage_information", e.target.value)}
+                    placeholder="Optional — content revealed once at this stage before the prompts."
                   />
                 </div>
-                <div>
-                  <label className="text-sm text-gray-700">Question (student types answer)</label>
-                  <textarea
-                    className="mt-1 w-full border rounded-md px-3 py-2 min-h-[100px]"
-                    value={st.question_text}
-                    onChange={(e) => updateStage(i, "question_text", e.target.value)}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-700">Rubric criteria (required)</label>
-                  <textarea
-                    className="mt-1 w-full border rounded-md px-3 py-2 min-h-[72px]"
-                    value={st.rubric_criteria}
-                    onChange={(e) => updateStage(i, "rubric_criteria", e.target.value)}
-                    placeholder="Describe marking criteria for this stage."
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-700">Max score (1-100)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    className="mt-1 w-full border rounded-md px-3 py-2"
-                    value={st.max_score}
-                    onChange={(e) => updateStage(i, "max_score", e.target.value)}
-                    required
-                  />
-                </div>
+                {st.items.map((item, ii) => (
+                  <div
+                    key={ii}
+                    className="border border-slate-200 rounded-md bg-white/80 p-3 space-y-3"
+                  >
+                    <div className="flex justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-800">
+                        Prompt {ii + 1}
+                        {st.items.length > 1 ? ` of ${st.items.length}` : ""}{" "}
+                        <span className="font-normal text-slate-600">— answered together on one screen</span>
+                      </span>
+                      {st.items.length > 1 ? (
+                        <button
+                          type="button"
+                          className="text-xs text-red-700 hover:underline"
+                          onClick={() => removeQuestionFromStage(i, ii)}
+                        >
+                          Remove prompt
+                        </button>
+                      ) : null}
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-700">Media URL (optional)</label>
+                      <input
+                        type="url"
+                        className="mt-1 w-full border rounded-md px-3 py-2"
+                        value={item.media_url}
+                        onChange={(e) => updateStageItem(i, ii, "media_url", e.target.value)}
+                        placeholder="https://"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-700">Question (student answer)</label>
+                      <textarea
+                        className="mt-1 w-full border rounded-md px-3 py-2 min-h-[100px]"
+                        value={item.question_text}
+                        onChange={(e) => updateStageItem(i, ii, "question_text", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-700">Rubric</label>
+                      <textarea
+                        className="mt-1 w-full border rounded-md px-3 py-2 min-h-[72px]"
+                        value={item.rubric_criteria}
+                        onChange={(e) => updateStageItem(i, ii, "rubric_criteria", e.target.value)}
+                        placeholder="Marking criteria for this prompt."
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-700">Max score (1-100)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="mt-1 w-full border rounded-md px-3 py-2"
+                        value={item.max_score}
+                        onChange={(e) => updateStageItem(i, ii, "max_score", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => addQuestionToStage(i)}
+                  className="text-sm border border-dashed border-slate-300 rounded-md px-3 py-2 text-slate-700 hover:bg-slate-50 w-full sm:w-auto"
+                >
+                  + Add another graded prompt in this stage
+                </button>
               </div>
             ))}
             <button

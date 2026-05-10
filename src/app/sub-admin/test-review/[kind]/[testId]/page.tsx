@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
+import { getSessionUserId } from "@/lib/auth/session";
+import { useRoleGate } from "@/hooks/useRoleGate";
 
 const REVIEW_STATUS_VALUES = ["pending_committee", "approved", "rejected"] as const;
 
@@ -20,18 +26,23 @@ function parseOptionsJsonIds(optionsJson: string): string[] {
     return [];
   }
 }
-import Link from "next/link";
-import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
-import { getSessionUserId } from "@/lib/auth/session";
-import { useRoleGate } from "@/hooks/useRoleGate";
+
+/** One blob per audit row — student-facing wording only (MEQ briefing + stem). */
+function meqQuestionBodyBlob(stageInformation: string, questionText: string) {
+  return `${stageInformation.trim()}\n---\n${questionText.trim()}`;
+}
+
+/** One blob — stem + options + correct key (SBA whole item). */
+function sbaWholeQuestionBlob(stem: string, options: unknown, correctOptionId: string) {
+  return `STEM:\n${stem.trim()}\nOPTIONS_JSON:\n${JSON.stringify(options ?? [])}\nCORRECT:${correctOptionId.trim()}`;
+}
 
 type Kind = "meq" | "sba";
 
 type MeqStageDetail = {
   id: string;
   sequence_order: number;
+  time_limit_minutes: number | null;
   stage_information: string | null;
   question_text: string;
   rubric_criteria: string | null;
@@ -51,6 +62,7 @@ type MeqStageDraft = {
   question_text: string;
   rubric_criteria: string;
   max_score: string;
+  stage_time_limit: string;
 };
 
 type SbaQDraft = {
@@ -86,7 +98,12 @@ export default function CommitteeTestReviewPage() {
   });
   const [meqStages, setMeqStages] = useState<MeqStageDetail[]>([]);
   const [stageDrafts, setStageDrafts] = useState<Record<string, MeqStageDraft>>({});
-  const [sbaMeta, setSbaMeta] = useState<{ subject: string; subject_code: string } | null>(null);
+  const [sbaMeta, setSbaMeta] = useState<{
+    subject: string;
+    subject_code: string;
+    time_limit_minutes: number | null;
+  } | null>(null);
+  const [sbaOverviewDraft, setSbaOverviewDraft] = useState({ time_limit_minutes: "" });
   const [sbaQuestions, setSbaQuestions] = useState<SbaQDetail[]>([]);
   const [sbaDrafts, setSbaDrafts] = useState<Record<string, SbaQDraft>>({});
 
@@ -97,6 +114,7 @@ export default function CommitteeTestReviewPage() {
   const [savingOverview, setSavingOverview] = useState(false);
   const [savingStageId, setSavingStageId] = useState<string | null>(null);
   const [savingQuestionId, setSavingQuestionId] = useState<string | null>(null);
+  const [savingSbaOverview, setSavingSbaOverview] = useState(false);
   const [savingReviewStatus, setSavingReviewStatus] = useState(false);
   const [okMessage, setOkMessage] = useState<string | null>(null);
 
@@ -143,7 +161,9 @@ export default function CommitteeTestReviewPage() {
       );
       const { data: st, error: se } = await supabase
         .from("meq_test_stages")
-        .select("id, sequence_order, stage_information, question_text, rubric_criteria, max_score")
+        .select(
+          "id, sequence_order, time_limit_minutes, stage_information, question_text, rubric_criteria, max_score",
+        )
         .eq("meq_test_id", testId)
         .order("sequence_order", { ascending: true });
       if (se) {
@@ -160,13 +180,15 @@ export default function CommitteeTestReviewPage() {
           question_text: s.question_text,
           rubric_criteria: s.rubric_criteria ?? "",
           max_score: s.max_score != null ? String(s.max_score) : "",
+          stage_time_limit:
+            s.time_limit_minutes != null ? String(s.time_limit_minutes) : "",
         };
       }
       setStageDrafts(d);
     } else {
       const { data: test, error: te } = await supabase
         .from("sba_tests")
-        .select("id, subject, subject_code, review_status, public_code")
+        .select("id, subject, subject_code, time_limit_minutes, review_status, public_code")
         .eq("id", testId)
         .maybeSingle();
       if (te || !test) {
@@ -174,7 +196,15 @@ export default function CommitteeTestReviewPage() {
         setLoading(false);
         return;
       }
-      setSbaMeta({ subject: test.subject, subject_code: test.subject_code });
+      setSbaMeta({
+        subject: test.subject,
+        subject_code: test.subject_code,
+        time_limit_minutes: test.time_limit_minutes ?? null,
+      });
+      setSbaOverviewDraft({
+        time_limit_minutes:
+          test.time_limit_minutes != null ? String(test.time_limit_minutes) : "",
+      });
       setLabel(`${test.subject} · ${test.subject_code}`);
       setTestPublicCode(test.public_code ?? null);
       const rs = test.review_status as string | undefined;
@@ -211,6 +241,33 @@ export default function CommitteeTestReviewPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const saveSbaOverview = async () => {
+    if (!canEdit || kind !== "sba" || !testId) return;
+    setSavingSbaOverview(true);
+    setErr(null);
+    setOkMessage(null);
+    const tlRaw = sbaOverviewDraft.time_limit_minutes.trim();
+    const tlNum = tlRaw ? parseInt(tlRaw, 10) : NaN;
+    if (tlRaw && (Number.isNaN(tlNum) || tlNum < 1 || tlNum > 600)) {
+      setErr("Overall SBA time (minutes) must be 1–600 or empty.");
+      setSavingSbaOverview(false);
+      return;
+    }
+    const { error } = await supabase
+      .from("sba_tests")
+      .update({
+        time_limit_minutes: tlRaw ? tlNum : null,
+      })
+      .eq("id", testId);
+    setSavingSbaOverview(false);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    setOkMessage("SBA test timer settings saved.");
+    void load();
+  };
 
   const saveMeqOverview = async () => {
     if (!canEdit || kind !== "meq" || !testId) return;
@@ -269,8 +326,21 @@ export default function CommitteeTestReviewPage() {
       return;
     }
 
+    const stlRaw = draft.stage_time_limit.trim();
+    const stageMinutesForDb = stlRaw ? parseInt(stlRaw, 10) : NaN;
+    if (
+      stlRaw &&
+      (Number.isNaN(stageMinutesForDb) || stageMinutesForDb < 1 || stageMinutesForDb > 600)
+    ) {
+      setErr(`Stage ${prev.sequence_order}: per-stage time must be 1–600 minutes or empty.`);
+      setSavingStageId(null);
+      return;
+    }
+
     const prevRub = prev.rubric_criteria ?? "";
     const prevMax = prev.max_score ?? 0;
+    const prevBody = meqQuestionBodyBlob(prev.stage_information ?? "", prev.question_text);
+    const nextBody = meqQuestionBodyBlob(draft.stage_information, qText);
 
     const { error: upErr } = await supabase
       .from("meq_test_stages")
@@ -279,6 +349,7 @@ export default function CommitteeTestReviewPage() {
         question_text: qText,
         rubric_criteria: newRub,
         max_score: maxNum,
+        time_limit_minutes: stlRaw ? stageMinutesForDb : null,
       })
       .eq("id", stageId);
 
@@ -289,6 +360,22 @@ export default function CommitteeTestReviewPage() {
     }
 
     const editorId = await getSessionUserId();
+    if (editorId && prevBody !== nextBody) {
+      const { error: bodyLogErr } = await supabase.from("meq_stage_question_whole_edit_log").insert({
+        meq_stage_id: stageId,
+        meq_test_id: testId,
+        editor_id: editorId,
+        previous_whole: prevBody,
+        new_whole: nextBody,
+      });
+      if (bodyLogErr) {
+        setErr("Stage saved but question text audit log failed: " + bodyLogErr.message);
+        setSavingStageId(null);
+        void load();
+        return;
+      }
+    }
+
     if (editorId && (newRub !== prevRub || maxNum !== prevMax)) {
       const { error: logErr } = await supabase.from("meq_rubric_revision_log").insert({
         meq_stage_id: stageId,
@@ -360,6 +447,13 @@ export default function CommitteeTestReviewPage() {
       return;
     }
 
+    const prevWhole = sbaWholeQuestionBlob(
+      prev.stem,
+      prev.options,
+      prev.correct_option_id ?? "",
+    );
+    const nextWhole = sbaWholeQuestionBlob(stem, optionsParsed, keyId);
+
     const { error } = await supabase
       .from("sba_test_questions")
       .update({
@@ -374,6 +468,23 @@ export default function CommitteeTestReviewPage() {
       setErr(error.message);
       return;
     }
+
+    const editorId = await getSessionUserId();
+    if (editorId && prevWhole !== nextWhole) {
+      const { error: logErr } = await supabase.from("sba_question_whole_edit_log").insert({
+        sba_test_question_id: questionId,
+        sba_test_id: testId,
+        editor_id: editorId,
+        previous_whole: prevWhole,
+        new_whole: nextWhole,
+      });
+      if (logErr) {
+        setErr("Question saved but whole-question audit log failed: " + logErr.message);
+        void load();
+        return;
+      }
+    }
+
     setOkMessage(`Question ${prev.sequence_order} saved.`);
     void load();
   };
@@ -506,6 +617,9 @@ export default function CommitteeTestReviewPage() {
         <section key={st.id} className="bg-white border rounded-lg p-5 text-sm space-y-3">
           <div className="font-semibold text-slate-900">
             Stage {st.sequence_order}
+            {st.time_limit_minutes != null && (
+              <span className="text-slate-500 font-normal"> · Stage time {st.time_limit_minutes} min</span>
+            )}
             {st.max_score != null && (
               <span className="text-slate-500 font-normal"> · Max score {st.max_score}</span>
             )}
@@ -593,6 +707,28 @@ export default function CommitteeTestReviewPage() {
             }
           />
         </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500">
+            Per-stage time limit (minutes, student countdown)
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={600}
+            placeholder="Optional — omit for no stage timer"
+            className="mt-1 w-full max-w-xs border rounded-md px-3 py-2"
+            value={d.stage_time_limit}
+            onChange={(e) =>
+              setStageDrafts((prev) => ({
+                ...prev,
+                [st.id]: { ...d, stage_time_limit: e.target.value },
+              }))
+            }
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Separate from the overall MEQ timer in Case overview — used for the floating bar countdown per stage.
+          </p>
+        </div>
         <button
           type="button"
           disabled={savingStageId === st.id}
@@ -641,7 +777,7 @@ export default function CommitteeTestReviewPage() {
         <div className="font-semibold text-slate-900">
           Question {q.sequence_order}
           <span className="text-slate-500 font-normal text-xs ml-2">
-            Save this item after changing stem, options, or correct answer.
+            Save this item after edits (stem, options, correct answer).
           </span>
         </div>
         <div>
@@ -753,9 +889,11 @@ export default function CommitteeTestReviewPage() {
         {canEdit && (
           <div className="rounded border border-blue-200 bg-blue-50 text-blue-950 px-4 py-3 text-sm">
             <strong>Admin / sub-admin:</strong> save each block with its own button — case overview once; each
-            MEQ stage separately (question, rubric, max score); each SBA question separately (stem, options JSON,
-            correct answer). Use &quot;Review decision&quot; at the bottom to set status to approved when ready.
-            Content edits never change the test&apos;s public code or row id.
+            MEQ stage separately (question, rubric, max score, optional per-stage timer); optional SBA overall timer
+            on the test (real attempts usually use assignment time limits); each SBA item separately (stem, options JSON, correct answer).
+            Whole-question text changes are audited (previous snapshot → new snapshot, one row per save). Use
+            &quot;Review decision&quot; at the bottom to set status to approved when ready. Content edits never
+            change the test&apos;s public code or row id.
           </div>
         )}
 
@@ -778,10 +916,53 @@ export default function CommitteeTestReviewPage() {
           </div>
         ) : kind === "sba" && sbaMeta ? (
           <div className="space-y-6">
-            <section className="bg-white border rounded-lg p-5 text-sm">
-              <h2 className="font-semibold text-lg mb-2">SBA · {sbaMeta.subject}</h2>
-              <p className="text-slate-600">Code {sbaMeta.subject_code}</p>
-            </section>
+            {canEdit ? (
+              <section className="bg-white border rounded-lg p-5 text-sm space-y-4">
+                <h2 className="font-semibold text-lg">SBA · {sbaMeta.subject}</h2>
+                <p className="text-slate-600">Code {sbaMeta.subject_code}</p>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Overall test time (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={600}
+                    placeholder="Optional — no overall cap"
+                    className="mt-1 w-full max-w-xs border rounded-md px-3 py-2"
+                    value={sbaOverviewDraft.time_limit_minutes}
+                    onChange={(e) =>
+                      setSbaOverviewDraft((d) => ({ ...d, time_limit_minutes: e.target.value }))
+                    }
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Fallback when a student opens this SBA without an assignment timer (practice, etc.). Formal
+                    real tests normally use the minutes set on{" "}
+                    <span className="font-medium">Dashboard → Test assignments</span>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={savingSbaOverview}
+                  onClick={() => void saveSbaOverview()}
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+                >
+                  {savingSbaOverview ? "Saving…" : "Save SBA timer settings"}
+                </button>
+              </section>
+            ) : (
+              <section className="bg-white border rounded-lg p-5 text-sm">
+                <h2 className="font-semibold text-lg mb-2">SBA · {sbaMeta.subject}</h2>
+                <p className="text-slate-600">Code {sbaMeta.subject_code}</p>
+                {sbaMeta.time_limit_minutes != null ? (
+                  <p className="mt-2 text-slate-800">
+                    Overall test time: <span className="font-semibold">{sbaMeta.time_limit_minutes} min</span>
+                  </p>
+                ) : (
+                  <p className="mt-2 text-slate-600 text-xs">No overall time cap configured.</p>
+                )}
+              </section>
+            )}
             {sbaQuestions.map((q) => renderSbaQuestion(q))}
           </div>
         ) : (

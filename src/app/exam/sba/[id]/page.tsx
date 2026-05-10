@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type SbaTest = {
@@ -11,6 +11,7 @@ type SbaTest = {
   review_status: string;
   test_year: number;
   test_function: "practice" | "real_test";
+  time_limit_minutes: number | null;
 };
 
 type SbaOption = { id: string; text: string };
@@ -30,6 +31,9 @@ type AnswersMap = Record<string, string | undefined>;
 export default function StudentSbaExamPage() {
   const { id: testId } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const assignmentId = searchParams.get("assignment")?.trim() || null;
+
   const [test, setTest] = useState<SbaTest | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<AnswersMap>({});
@@ -41,6 +45,7 @@ export default function StudentSbaExamPage() {
   const sessionStartRef = useRef<number | null>(null);
   const [sessionTick, setSessionTick] = useState(0);
   const [lastPracticeByQuestion, setLastPracticeByQuestion] = useState<Record<string, string>>({});
+  const [overallExpired, setOverallExpired] = useState(false);
 
   useEffect(() => {
     let m = true;
@@ -65,14 +70,14 @@ export default function StudentSbaExamPage() {
 
       const { data: t, error: terr } = await supabase
         .from("sba_tests")
-        .select("id, subject, subject_code, review_status, test_year, test_function")
+        .select("id, subject, subject_code, review_status, test_year, test_function, time_limit_minutes")
         .eq("id", testId)
         .maybeSingle();
       if (terr || !t) {
         if (m) {
           setError(
             me?.role === "student"
-              ? "This test could not be loaded. Practice items must be approved; real exams only open from your Test session when assigned."
+              ? "This test could not be loaded. Practice items must be approved; real exams open from Test taking when assigned."
               : "Could not load this test.",
           );
           setLoading(false);
@@ -97,6 +102,21 @@ export default function StudentSbaExamPage() {
           setLoading(false);
         }
         return;
+      }
+
+      const tfVal = (t.test_function as "practice" | "real_test" | null) ?? "real_test";
+      const isPracticeTf = tfVal === "practice";
+      let mergedTl: number | null = t.time_limit_minutes ?? null;
+      if (!isPracticeTf && assignmentId) {
+        const { data: asgRow } = await supabase
+          .from("staff_test_assignments")
+          .select("exam_time_limit_minutes")
+          .eq("id", assignmentId)
+          .maybeSingle();
+        const cap = asgRow?.exam_time_limit_minutes;
+        if (cap != null && Number.isFinite(cap) && cap > 0) {
+          mergedTl = cap;
+        }
       }
 
       const { data: qrows, error: qerr } = await supabase
@@ -128,6 +148,7 @@ export default function StudentSbaExamPage() {
       if (m) {
         setTest({
           ...t,
+          time_limit_minutes: mergedTl,
           test_function: (t.test_function as "practice" | "real_test" | null) ?? "real_test",
         });
         setQuestions(qlist);
@@ -140,7 +161,7 @@ export default function StudentSbaExamPage() {
     return () => {
       m = false;
     };
-  }, [testId, router]);
+  }, [testId, router, assignmentId]);
 
   const setOne = (qid: string, optionId: string) => {
     setAnswers((prev) => ({ ...prev, [qid]: optionId }));
@@ -151,22 +172,41 @@ export default function StudentSbaExamPage() {
       setError("You are not signed in.");
       return;
     }
-    for (const q of questions) {
-      if (!answers[q.id]?.trim()) {
-        setError("Select an answer for every question.");
+    const allowIncomplete = overallExpired && test?.time_limit_minutes != null && test.time_limit_minutes > 0;
+    if (!allowIncomplete) {
+      for (const q of questions) {
+        if (!answers[q.id]?.trim()) {
+          setError("Select an answer for every question.");
+          return;
+        }
+      }
+    } else {
+      const anyAnswered = questions.some((q) => answers[q.id]?.trim());
+      if (!anyAnswered) {
+        setError("Overall time elapsed — choose at least one answer before submitting.");
         return;
       }
     }
     setError(null);
     setSaving(true);
 
-    const rows = questions.map((q) => ({
-      sba_test_question_id: q.id,
-      user_id: userId,
-      selected_option_id: answers[q.id]!,
-      // Keep only latest attempt's grading state.
-      is_correct: null,
-    }));
+    const rows = questions
+      .map((q) => {
+        const pick = answers[q.id]?.trim();
+        if (!pick) return null;
+        return {
+          sba_test_question_id: q.id,
+          user_id: userId,
+          selected_option_id: pick,
+          is_correct: null,
+        };
+      })
+      .filter(Boolean) as {
+      sba_test_question_id: string;
+      user_id: string;
+      selected_option_id: string;
+      is_correct: null;
+    }[];
 
     const { error: insErr } = await supabase.from("sba_question_responses").upsert(rows, {
       onConflict: "user_id,sba_test_question_id",
@@ -178,7 +218,7 @@ export default function StudentSbaExamPage() {
     }
     setDone(true);
     setSaving(false);
-  }, [answers, questions, userId]);
+  }, [answers, questions, userId, overallExpired, test]);
 
   const isPractice = test?.test_function === "practice";
 
@@ -214,7 +254,7 @@ export default function StudentSbaExamPage() {
         setError(
           snapErr.message.includes("does not exist") || snapErr.message.includes("relation")
             ? "Database not updated (migration 020). Cannot keep previous answers."
-            : "Could not save previous attempt reference."
+            : "Could not save previous attempt reference.",
         );
         setSaving(false);
         return;
@@ -236,22 +276,23 @@ export default function StudentSbaExamPage() {
       setError(
         delErr.message.includes("policy") || delErr.code === "42501"
           ? "Retake is only for practice exams (or apply migration 020)."
-          : "Could not reset your attempt. Please try again."
+          : "Could not reset your attempt. Please try again.",
       );
       setSaving(false);
       return;
     }
     setAnswers({});
     setDone(false);
+    setOverallExpired(false);
     sessionStartRef.current = Date.now();
     setSessionTick((n) => n + 1);
     setSaving(false);
   }, [questions, userId, test, answers, lastPracticeByQuestion]);
 
   const formatMmSs = (sec: number) => {
-    const m = Math.floor(sec / 60);
+    const mins = Math.floor(sec / 60);
     const s = sec % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    return `${mins.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
 
   const elapsedSeconds = useMemo(() => {
@@ -259,9 +300,27 @@ export default function StudentSbaExamPage() {
     return Math.floor((Date.now() - sessionStartRef.current) / 1000);
   }, [sessionTick]);
 
+  const overallLimitMin = test?.time_limit_minutes ?? null;
+  const overallRemainingSeconds = useMemo(() => {
+    if (overallLimitMin == null || overallLimitMin <= 0) return null;
+    return Math.max(0, overallLimitMin * 60 - elapsedSeconds);
+  }, [overallLimitMin, elapsedSeconds]);
+
+  useEffect(() => {
+    if (
+      overallRemainingSeconds != null &&
+      overallRemainingSeconds <= 0 &&
+      !done &&
+      test &&
+      overallLimitMin != null
+    ) {
+      setOverallExpired(true);
+    }
+  }, [overallRemainingSeconds, done, test, overallLimitMin]);
+
   useEffect(() => {
     if (done || !test) return;
-    const id = window.setInterval(() => setSessionTick((t) => t + 1), 1000);
+    const id = window.setInterval(() => setSessionTick((tick) => tick + 1), 1000);
     return () => window.clearInterval(id);
   }, [done, test]);
 
@@ -320,8 +379,25 @@ export default function StudentSbaExamPage() {
         </h1>
         <p className="text-sm text-gray-600 mt-1">Single best answer: choose one option per question.</p>
         {!done ? (
-          <p className="text-sm font-semibold text-blue-950 mt-2">
-            Time on this test: <span className="tabular-nums">{formatMmSs(elapsedSeconds)}</span>
+          <div className="text-sm mt-2 space-y-1">
+            <p className="font-semibold text-blue-950">
+              Time on this test: <span className="tabular-nums">{formatMmSs(elapsedSeconds)}</span>
+            </p>
+            {overallRemainingSeconds != null ? (
+              <p
+                className={
+                  overallExpired || overallRemainingSeconds <= 120 ? "text-red-700 font-semibold" : "text-slate-800"
+                }
+              >
+                Overall time left:{" "}
+                <span className="tabular-nums">{formatMmSs(overallRemainingSeconds)}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {overallExpired && !done ? (
+          <p className="text-sm font-semibold text-red-700 mt-2 rounded border border-red-200 bg-red-50 px-3 py-2">
+            Overall time has elapsed — selections are frozen. Submit to save whichever questions you answered.
           </p>
         ) : null}
       </header>
@@ -350,7 +426,7 @@ export default function StudentSbaExamPage() {
                           name={`q-${q.id}`}
                           checked={answers[q.id] === o.id}
                           onChange={() => setOne(q.id, o.id)}
-                          disabled={saving}
+                          disabled={saving || overallExpired}
                         />
                         <span className="pt-0.5">
                           <span className="font-mono font-bold mr-2">{o.id}.</span>

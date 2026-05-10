@@ -2,13 +2,28 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { TEST_ASSIGNMENT_ROLES } from "@/lib/auth/roles";
 import { getAuthUserId } from "@/lib/auth/session";
 import { useRoleGate } from "@/hooks/useRoleGate";
 
-type TestGroup = { id: string; name: string; created_at: string };
+function isoToDatetimeLocalValue(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+type AssessmentPurpose = "formative" | "summative";
+
+type TestGroup = {
+  id: string;
+  name: string;
+  created_at: string;
+  filter_course_code: string | null;
+  filter_exam_format: "MEQ" | "SBA" | null;
+  filter_assessment_purpose: AssessmentPurpose | null;
+};
 type TestGroupItem = {
   id: string;
   test_group_id: string;
@@ -23,11 +38,13 @@ type Assignment = {
   test_group_id: string;
   window_start: string | null;
   window_end: string | null;
+  exam_time_limit_minutes: number | null;
   created_at: string;
 };
 
+type AsgEditDraft = { winStart: string; winEnd: string; examLimit: string };
+
 export default function TestAssignmentsPage() {
-  const router = useRouter();
   const { ready: accessOk, loading: gateLoading, role } = useRoleGate(TEST_ASSIGNMENT_ROLES, {
     noUserRedirect: "/login",
     wrongRoleRedirect: "/practice-tests",
@@ -37,6 +54,11 @@ export default function TestAssignmentsPage() {
   const [testGroups, setTestGroups] = useState<TestGroup[]>([]);
   const [tgItems, setTgItems] = useState<Record<string, TestGroupItem[]>>({});
   const [newTgName, setNewTgName] = useState("");
+  const [newTgCourse, setNewTgCourse] = useState("");
+  const [newTgFormat, setNewTgFormat] = useState<"MEQ" | "SBA">("MEQ");
+  const [newTgPurpose, setNewTgPurpose] = useState<AssessmentPurpose>("summative");
+  const [courses, setCourses] = useState<{ course_code: string; course_title: string | null }[]>([]);
+
   const [pickTg, setPickTg] = useState<string>("");
   const [addMeqId, setAddMeqId] = useState("");
   const [addSbaId, setAddSbaId] = useState("");
@@ -52,6 +74,11 @@ export default function TestAssignmentsPage() {
   const [asgTg, setAsgTg] = useState("");
   const [winStart, setWinStart] = useState("");
   const [winEnd, setWinEnd] = useState("");
+  const [asgExamLimit, setAsgExamLimit] = useState("");
+  const [asgEdits, setAsgEdits] = useState<Record<string, AsgEditDraft>>({});
+  const [studentNavVisible, setStudentNavVisible] = useState(false);
+  const [navDraft, setNavDraft] = useState(false);
+  const [navSaving, setNavSaving] = useState(false);
   const [rcpType, setRcpType] = useState<"student" | "group">("student");
   const [rcpStudentEmail, setRcpStudentEmail] = useState("");
   const [rcpGroupId, setRcpGroupId] = useState("");
@@ -63,15 +90,44 @@ export default function TestAssignmentsPage() {
     setErr(null);
     if (!accessOk || gateLoading || !role) return;
 
-    const [{ data: tg }, { data: sg }, { data: asg }] = await Promise.all([
-      supabase.from("staff_test_groups").select("id, name, created_at").order("created_at", { ascending: false }),
+    const [{ data: tg }, { data: sg }, { data: asg }, { data: cat }] = await Promise.all([
+      supabase
+        .from("staff_test_groups")
+        .select(
+          "id, name, created_at, filter_course_code, filter_exam_format, filter_assessment_purpose",
+        )
+        .order("created_at", { ascending: false }),
       supabase.from("staff_student_groups").select("id, name, created_at").order("created_at", { ascending: false }),
-      supabase.from("staff_test_assignments").select("id, title, test_group_id, window_start, window_end, created_at").order("created_at", { ascending: false }),
+      supabase
+        .from("staff_test_assignments")
+        .select("id, title, test_group_id, window_start, window_end, exam_time_limit_minutes, created_at")
+        .order("created_at", { ascending: false }),
+      supabase.from("course_catalog").select("course_code, course_title").order("course_code").limit(900),
     ]);
 
-    setTestGroups((tg as TestGroup[]) || []);
+    setTestGroups(((tg ?? []) as TestGroup[]) || []);
+    setCourses((cat ?? []) as { course_code: string; course_title: string | null }[]);
     setStudentGroups((sg as StudentGroup[]) || []);
-    setAssignments((asg as Assignment[]) || []);
+    const asgRows = (asg as Assignment[]) || [];
+    setAssignments(asgRows);
+
+    const { data: navRow } = await supabase.from("student_ui_settings").select("test_taking_nav_visible").eq("id", 1).maybeSingle();
+    const vis = !!(navRow as { test_taking_nav_visible?: boolean } | null)?.test_taking_nav_visible;
+    setStudentNavVisible(vis);
+    setNavDraft(vis);
+
+    const nextEdits: Record<string, AsgEditDraft> = {};
+    for (const a of asgRows) {
+      nextEdits[a.id] = {
+        winStart: a.window_start ? isoToDatetimeLocalValue(a.window_start) : "",
+        winEnd: a.window_end ? isoToDatetimeLocalValue(a.window_end) : "",
+        examLimit:
+          a.exam_time_limit_minutes != null && Number.isFinite(a.exam_time_limit_minutes)
+            ? String(a.exam_time_limit_minutes)
+            : "",
+      };
+    }
+    setAsgEdits(nextEdits);
 
     const tgIds = ((tg as TestGroup[]) || []).map((x) => x.id);
     if (tgIds.length > 0) {
@@ -130,19 +186,32 @@ export default function TestAssignmentsPage() {
       setErr("Name the test group.");
       return;
     }
+    if (!newTgCourse.trim()) {
+      setErr("Choose a catalog subject code.");
+      return;
+    }
     const uid = await getAuthUserId();
     if (!uid) return;
     const { error } = await supabase
       .from("staff_test_groups")
-      .insert({ name, created_by: uid })
+      .insert({
+        name,
+        created_by: uid,
+        filter_course_code: newTgCourse.trim(),
+        filter_exam_format: newTgFormat,
+        filter_assessment_purpose: newTgPurpose,
+      })
       .select("id")
       .single();
     if (error) {
-      setErr(error.message || "Could not create. Run migration 020.");
+      setErr(error.message || "Could not create. Apply migration 037 (bundle filters).");
       return;
     }
     setNewTgName("");
-    setMsg("Test group created.");
+    setNewTgCourse("");
+    setNewTgFormat("MEQ");
+    setNewTgPurpose("summative");
+    setMsg("Test bundle created — open it to see matching tests.");
     void load();
   };
 
@@ -151,6 +220,17 @@ export default function TestAssignmentsPage() {
     setMsg(null);
     if (!pickTg) {
       setErr("Choose a test group.");
+      return;
+    }
+    const gSel = testGroups.find((x) => x.id === pickTg);
+    if (
+      gSel?.filter_course_code &&
+      gSel?.filter_exam_format &&
+      gSel?.filter_assessment_purpose
+    ) {
+      setErr(
+        "This bundle uses catalog scope (subject + format + assessment). Matching tests appear automatically — no UUID attachment.",
+      );
       return;
     }
     const meq = addMeqId.trim();
@@ -270,11 +350,95 @@ export default function TestAssignmentsPage() {
     void load();
   };
 
+  const saveStudentNavFromDraft = async () => {
+    setNavSaving(true);
+    setErr(null);
+    setMsg(null);
+    const uid = await getAuthUserId();
+    if (!uid) {
+      setNavSaving(false);
+      return;
+    }
+    const { error } = await supabase
+      .from("student_ui_settings")
+      .update({ test_taking_nav_visible: navDraft, updated_by: uid })
+      .eq("id", 1);
+    setNavSaving(false);
+    if (error) setErr(error.message);
+    else {
+      setStudentNavVisible(navDraft);
+      setMsg("Test taking availability saved for students.");
+    }
+  };
+
+  const saveAssignmentRow = async (id: string) => {
+    setErr(null);
+    setMsg(null);
+    const d = asgEdits[id];
+    if (!d) {
+      setErr("Internal: missing draft fields for assignment.");
+      return;
+    }
+    if (!d.winStart.trim()) {
+      setErr("Each assignment requires a window start.");
+      return;
+    }
+    if (!d.winEnd.trim()) {
+      setErr("Each assignment requires a window end.");
+      return;
+    }
+    const startMs = new Date(d.winStart).getTime();
+    const endMs = new Date(d.winEnd).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+      setErr("Assignment window dates are invalid.");
+      return;
+    }
+    if (endMs < startMs) {
+      setErr("Window end must be on or after window start.");
+      return;
+    }
+    const lim = parseInt(d.examLimit.trim(), 10);
+    if (Number.isNaN(lim) || lim < 1 || lim > 600) {
+      setErr("Exam time limit must be 1–600 minutes.");
+      return;
+    }
+    const { error } = await supabase
+      .from("staff_test_assignments")
+      .update({
+        window_start: new Date(d.winStart).toISOString(),
+        window_end: new Date(d.winEnd).toISOString(),
+        exam_time_limit_minutes: lim,
+      })
+      .eq("id", id);
+    if (error) setErr(error.message);
+    else setMsg(`Assignment scheduling updated (${id.slice(0, 8)}…).`);
+    void load();
+  };
+
   const createAssignment = async () => {
     setErr(null);
     setMsg(null);
     if (!asgTg || !asgTitle.trim()) {
       setErr("Choose a test group and enter a title.");
+      return;
+    }
+    if (!winStart.trim() || !winEnd.trim()) {
+      setErr("Window start and end are required.");
+      return;
+    }
+    const ws = new Date(winStart).getTime();
+    const we = new Date(winEnd).getTime();
+    if (Number.isNaN(ws) || Number.isNaN(we)) {
+      setErr("Assignment window dates are invalid.");
+      return;
+    }
+    if (we < ws) {
+      setErr("Window end must be on or after window start.");
+      return;
+    }
+    const examLim = parseInt(asgExamLimit.trim(), 10);
+    if (Number.isNaN(examLim) || examLim < 1 || examLim > 600) {
+      setErr("Exam time limit must be between 1 and 600 minutes (overall cap once student begins).");
       return;
     }
     const uid = await getAuthUserId();
@@ -285,8 +449,9 @@ export default function TestAssignmentsPage() {
         test_group_id: asgTg,
         title: asgTitle.trim(),
         created_by: uid,
-        window_start: winStart ? new Date(winStart).toISOString() : null,
-        window_end: winEnd ? new Date(winEnd).toISOString() : null,
+        window_start: new Date(winStart).toISOString(),
+        window_end: new Date(winEnd).toISOString(),
+        exam_time_limit_minutes: examLim,
       })
       .select("id")
       .single();
@@ -332,6 +497,7 @@ export default function TestAssignmentsPage() {
     setAsgTitle("");
     setWinStart("");
     setWinEnd("");
+    setAsgExamLimit("");
     setMsg("Assignment created with recipient.");
     void load();
   };
@@ -354,86 +520,232 @@ export default function TestAssignmentsPage() {
           <h1 className="text-3xl font-bold text-gray-900 mt-2">Test season assignments</h1>
           <p className="text-gray-600 text-sm mt-1">
             Build reusable <strong>test groups</strong> (only committee-approved{" "}
-            <strong>real</strong> tests) and <strong>student groups</strong>, then create a scheduling row with an
-            optional window. Assigned students open them under <strong>Test session</strong> in the app.
+            <strong>real</strong> tests) and <strong>student groups</strong>, then create scheduling rows with{" "}
+            <strong>required window</strong>, <strong>exam time limit</strong>, and recipient. Students discover
+            assigned tests on <strong>Test taking</strong> when you enable that link below.
           </p>
           <p className="text-orange-900 text-sm mt-2 bg-orange-100 border border-orange-300 rounded px-3 py-2">
-            Requires migrations <code className="font-mono">020_*</code> (tables) and{" "}
-            <code className="font-mono">021_*</code> (students only see assigned real tests via RLS).
+            Requires migrations <code className="font-mono">020_*</code> (tables), <code className="font-mono">021_*</code>{" "}
+            (RLS), <code className="font-mono">033_*</code> (exam minutes), and <code className="font-mono">037_*</code>{" "}
+            (scoped bundles + public test ids with MEQ/SBA in the code).
           </p>
         </div>
 
         {msg ? <div className="text-green-800 bg-green-50 border border-green-200 rounded px-3 py-2 text-sm">{msg}</div> : null}
         {err ? <div className="text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2 text-sm">{err}</div> : null}
 
+        <section className="border rounded-lg p-6 space-y-3 bg-blue-50/60 border-blue-100">
+          <h2 className="text-xl font-bold text-gray-900">Student &quot;Test taking&quot; page</h2>
+          <p className="text-sm text-gray-700">
+            The <strong className="text-blue-950">Test taking</strong> link always appears for students. Use this
+            switch to <strong>pause the scheduled-exam list</strong> (students see a short notice instead of assignments).
+            Current state:{" "}
+            <span className="font-semibold">{studentNavVisible ? "list active" : "list paused"}</span>.
+          </p>
+          <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+            <input type="checkbox" className="mt-1" checked={navDraft} onChange={(e) => setNavDraft(e.target.checked)} />
+            <span>Allow students to open and use the Test taking exam list</span>
+          </label>
+          <button
+            type="button"
+            disabled={navSaving || navDraft === studentNavVisible}
+            className="bg-blue-800 text-white px-4 py-2 rounded font-semibold text-sm disabled:opacity-50"
+            onClick={() => void saveStudentNavFromDraft()}
+          >
+            {navSaving ? "Saving…" : "Save Test taking availability"}
+          </button>
+        </section>
+
         <section className="border rounded-lg p-6 space-y-4">
           <h2 className="text-xl font-bold text-gray-900">1. Test groups (bundles)</h2>
-          <div className="flex flex-wrap gap-2 items-end">
-            <div>
-              <label className="block text-xs font-medium text-gray-600">New group name</label>
-              <input
-                className="border rounded px-3 py-2 w-64"
-                value={newTgName}
-                onChange={(e) => setNewTgName(e.target.value)}
-                placeholder="e.g. Spring cardio MEQ+SBA"
-              />
+          <p className="text-sm text-gray-600">
+            New bundles are <strong>scoped</strong>: pick a catalog code, MEQ vs SBA, and whether this bundle is for{" "}
+            <strong>formative</strong> or <strong>summative</strong> real tests. Every{" "}
+            <strong className="font-medium">approved</strong> real test whose course and assessment purpose match appears
+            in the bundle (and in Test taking once scheduled) — no UUID copy/paste.
+          </p>
+          <div className="grid md:grid-cols-2 gap-4 items-end">
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Bundle name</label>
+                <input
+                  className="border rounded px-3 py-2 w-full mt-1"
+                  value={newTgName}
+                  onChange={(e) => setNewTgName(e.target.value)}
+                  placeholder="e.g. Spring cardio summative MEQ"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Subject code (catalog)</label>
+                <select
+                  className="border rounded px-3 py-2 w-full mt-1"
+                  value={newTgCourse}
+                  onChange={(e) => setNewTgCourse(e.target.value)}
+                >
+                  <option value="">Select code…</option>
+                  {courses.map((c) => (
+                    <option key={c.course_code} value={c.course_code}>
+                      {c.course_code}
+                      {c.course_title ? ` — ${c.course_title}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <button type="button" className="bg-blue-800 text-white px-4 py-2 rounded font-semibold" onClick={() => void createTestGroup()}>
-              Create
-            </button>
-          </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-gray-600">Add MEQ or SBA to group</label>
-              <select
-                className="border rounded px-3 py-2 w-full mt-1"
-                value={pickTg}
-                onChange={(e) => setPickTg(e.target.value)}
-              >
-                <option value="">Select group…</option>
-                {testGroups.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <input
-                className="border rounded px-3 py-2 font-mono text-sm"
-                placeholder="MEQ UUID · approved · Real test only (staff dashboard)"
-                value={addMeqId}
-                onChange={(e) => setAddMeqId(e.target.value)}
-              />
-              <input
-                className="border rounded px-3 py-2 font-mono text-sm"
-                placeholder="SBA test UUID (leave MEQ empty if using this)"
-                value={addSbaId}
-                onChange={(e) => setAddSbaId(e.target.value)}
-              />
+            <div className="space-y-3">
+              <div>
+                <span className="block text-xs font-medium text-gray-600">Exam format</span>
+                <div className="flex gap-4 mt-2 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgFmt"
+                      checked={newTgFormat === "MEQ"}
+                      onChange={() => setNewTgFormat("MEQ")}
+                    />
+                    MEQ
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgFmt"
+                      checked={newTgFormat === "SBA"}
+                      onChange={() => setNewTgFormat("SBA")}
+                    />
+                    SBA
+                  </label>
+                </div>
+              </div>
+              <div>
+                <span className="block text-xs font-medium text-gray-600">Bundle track (filters real tests)</span>
+                <div className="flex gap-4 mt-2 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgPurpose"
+                      checked={newTgPurpose === "formative"}
+                      onChange={() => setNewTgPurpose("formative")}
+                    />
+                    Formative
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgPurpose"
+                      checked={newTgPurpose === "summative"}
+                      onChange={() => setNewTgPurpose("summative")}
+                    />
+                    Summative
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  This only chooses which approved real tests belong in the bundle (same labels as committee purpose on
+                  each test — we are not changing the authoring wizard).
+                </p>
+              </div>
               <button
                 type="button"
-                className="bg-gray-800 text-white px-3 py-2 rounded text-sm font-semibold w-fit"
-                onClick={() => void addTestToGroup()}
+                className="bg-blue-800 text-white px-4 py-2 rounded font-semibold"
+                onClick={() => void createTestGroup()}
               >
-                Add test to group
+                Create bundle
               </button>
             </div>
           </div>
-          <ul className="text-sm space-y-2 text-gray-700">
-            {testGroups.map((g) => (
-              <li key={g.id} className="border rounded p-2 bg-gray-50">
-                <span className="font-semibold">{g.name}</span>
-                <ul className="ml-4 mt-1 font-mono text-xs">
-                  {(tgItems[g.id] || []).map((it) => (
-                    <li key={it.id}>
-                      {it.meq_test_id ? `MEQ ${it.meq_test_id}` : `SBA ${it.sba_test_id}`}
-                    </li>
+          <div className="border-t pt-4 space-y-2">
+            <h3 className="text-sm font-semibold text-gray-800">Legacy: attach by test UUID</h3>
+            <p className="text-xs text-gray-600">
+              Older bundles keep empty scope fields and still use explicit MEQ/SBA ids (one per row).
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Target group</label>
+                <select
+                  className="border rounded px-3 py-2 w-full mt-1"
+                  value={pickTg}
+                  onChange={(e) => setPickTg(e.target.value)}
+                >
+                  <option value="">Select group…</option>
+                  {testGroups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
                   ))}
-                  {(tgItems[g.id] || []).length === 0 ? <li className="text-gray-500">No tests yet</li> : null}
-                </ul>
-              </li>
-            ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-2">
+                {pickTg &&
+                testGroups.find((x) => x.id === pickTg)?.filter_course_code ? (
+                  <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    Selected bundle is scoped — open it from the list below to see matching tests.
+                  </p>
+                ) : (
+                  <>
+                    <input
+                      className="border rounded px-3 py-2 font-mono text-sm"
+                      placeholder="MEQ UUID · approved · Real test only"
+                      value={addMeqId}
+                      onChange={(e) => setAddMeqId(e.target.value)}
+                    />
+                    <input
+                      className="border rounded px-3 py-2 font-mono text-sm"
+                      placeholder="SBA test UUID (leave MEQ empty if using this)"
+                      value={addSbaId}
+                      onChange={(e) => setAddSbaId(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="bg-gray-800 text-white px-3 py-2 rounded text-sm font-semibold w-fit"
+                      onClick={() => void addTestToGroup()}
+                    >
+                      Add test to group
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          <ul className="text-sm space-y-2 text-gray-700">
+            {testGroups.map((g) => {
+              const scoped =
+                g.filter_course_code && g.filter_exam_format && g.filter_assessment_purpose;
+              return (
+                <li key={g.id} className="border rounded p-2 bg-gray-50">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-semibold">{g.name}</span>
+                    <Link
+                      href={`/dashboard/test-assignments/group/${g.id}`}
+                      className="text-blue-700 text-xs font-semibold hover:underline"
+                    >
+                      Open bundle →
+                    </Link>
+                  </div>
+                  {scoped ? (
+                    <p className="text-xs text-gray-600 mt-1">
+                      <span className="font-mono">{g.filter_course_code}</span> · {g.filter_exam_format} ·{" "}
+                      {g.filter_assessment_purpose}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-800 mt-1">Legacy manual UUID list</p>
+                  )}
+                  <ul className="ml-4 mt-1 font-mono text-xs">
+                    {!scoped
+                      ? (tgItems[g.id] || []).map((it) => (
+                          <li key={it.id}>
+                            {it.meq_test_id ? `MEQ ${it.meq_test_id}` : `SBA ${it.sba_test_id}`}
+                          </li>
+                        ))
+                      : null}
+                    {!scoped && (tgItems[g.id] || []).length === 0 ? (
+                      <li className="text-gray-500">No manual rows</li>
+                    ) : null}
+                    {scoped ? (
+                      <li className="text-gray-600">Tests resolved from scope (see Open bundle)</li>
+                    ) : null}
+                  </ul>
+                </li>
+              );
+            })}
             {testGroups.length === 0 ? <li className="text-gray-500">No test groups yet.</li> : null}
           </ul>
         </section>
@@ -518,12 +830,25 @@ export default function TestAssignmentsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600">Window start (optional, local)</label>
+              <label className="block text-xs font-medium text-gray-600">Window start (required, local)</label>
               <input type="datetime-local" className="border rounded px-3 py-2 w-full mt-1" value={winStart} onChange={(e) => setWinStart(e.target.value)} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600">Window end (optional)</label>
+              <label className="block text-xs font-medium text-gray-600">Window end (required)</label>
               <input type="datetime-local" className="border rounded px-3 py-2 w-full mt-1" value={winEnd} onChange={(e) => setWinEnd(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600">Exam time limit (minutes)</label>
+              <input
+                type="number"
+                min={1}
+                max={600}
+                placeholder="Overall cap once they tap Begin"
+                className="border rounded px-3 py-2 w-full mt-1"
+                value={asgExamLimit}
+                onChange={(e) => setAsgExamLimit(e.target.value)}
+              />
+              <p className="text-xs text-gray-500 mt-1">Applies to each MEQ or SBA launched from Test taking via this assignment.</p>
             </div>
           </div>
           <div className="border-t pt-4 space-y-2">
@@ -559,14 +884,69 @@ export default function TestAssignmentsPage() {
           <button type="button" className="bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold" onClick={() => void createAssignment()}>
             Create assignment + recipient
           </button>
-          <ul className="text-sm text-gray-700 space-y-1">
-            {assignments.map((a) => (
-              <li key={a.id} className="font-mono text-xs border-b pb-1">
-                {a.title} — group {a.test_group_id.slice(0, 8)}…
-                {a.window_start ? ` | ${a.window_start}` : ""}
-                {a.window_end ? ` → ${a.window_end}` : ""}
-              </li>
-            ))}
+          <ul className="text-sm text-gray-800 space-y-4">
+            {assignments.map((a) => {
+              const d = asgEdits[a.id] ?? { winStart: "", winEnd: "", examLimit: "" };
+              return (
+                <li key={a.id} className="border rounded-lg p-4 space-y-2 bg-gray-50">
+                  <div className="font-semibold text-gray-900">{a.title}</div>
+                  <div className="font-mono text-xs text-gray-500">assignment {a.id}</div>
+                  <div className="grid md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Window start</label>
+                      <input
+                        type="datetime-local"
+                        className="border rounded px-2 py-1.5 w-full mt-1 text-xs"
+                        value={d.winStart}
+                        onChange={(e) =>
+                          setAsgEdits((prev) => ({
+                            ...prev,
+                            [a.id]: { ...d, winStart: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Window end</label>
+                      <input
+                        type="datetime-local"
+                        className="border rounded px-2 py-1.5 w-full mt-1 text-xs"
+                        value={d.winEnd}
+                        onChange={(e) =>
+                          setAsgEdits((prev) => ({
+                            ...prev,
+                            [a.id]: { ...d, winEnd: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">Exam limit (minutes)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={600}
+                        className="border rounded px-2 py-1.5 w-full mt-1 text-xs"
+                        value={d.examLimit}
+                        onChange={(e) =>
+                          setAsgEdits((prev) => ({
+                            ...prev,
+                            [a.id]: { ...d, examLimit: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="bg-slate-800 text-white px-4 py-2 rounded text-xs font-semibold"
+                    onClick={() => void saveAssignmentRow(a.id)}
+                  >
+                    Save window &amp; time limit
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </section>
 

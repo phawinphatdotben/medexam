@@ -40,9 +40,13 @@ export default function MyGrades() {
           created_at,
           human_override_score,
           ai_rationale_feedback,
-          meq_test_stages!inner(
-            meq_test_id,
-            meq_tests!inner( subject, course_code )
+          meq_stage_items (
+            sequence_order,
+            meq_test_stages!inner(
+              sequence_order,
+              meq_test_id,
+              meq_tests!inner( subject, course_code )
+            )
           )
         `
         )
@@ -60,20 +64,31 @@ export default function MyGrades() {
         created_at: string;
         human_override_score: number | null;
         ai_rationale_feedback: string | null;
-        meq_test_stages: {
-          meq_test_id: string;
-          meq_tests: { subject: string; course_code: string };
-        };
+        meq_stage_items?: {
+          sequence_order: number;
+          meq_test_stages?: {
+            sequence_order: number;
+            meq_test_id: string;
+            meq_tests: { subject: string; course_code: string };
+          };
+        } | null;
       };
 
       const flattened: GradedResponse[] = ((data as unknown as Row[] | null) || []).map((res) => {
-        const t = res.meq_test_stages.meq_tests;
+        const nested = Array.isArray(res.meq_stage_items)
+          ? res.meq_stage_items[0]
+          : res.meq_stage_items;
+        const st = nested?.meq_test_stages;
+        const t = st?.meq_tests ?? { subject: "MEQ", course_code: "" };
+        const stageLabel = typeof st?.sequence_order === "number" ? ` · stage ${st.sequence_order}` : "";
+        const partLabel =
+          typeof nested?.sequence_order === "number" ? ` · part ${nested.sequence_order}` : "";
         return {
           id: res.id,
           created_at: res.created_at,
           human_override_score: res.human_override_score,
           ai_rationale_feedback: res.ai_rationale_feedback,
-          test_label: `${t.subject} (${t.course_code}) — stage`,
+          test_label: `${t.subject} (${t.course_code})${stageLabel}${partLabel}`,
         };
       });
 

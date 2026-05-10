@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { SUBJECTS } from "@/lib/subjects";
@@ -73,20 +73,30 @@ function catalogRpcRowsToExams(rows: PracticeCatalogRpcRow[]): ExamListItem[] {
     });
 }
 
-/** Build practice-tests URL preserving subject filter. */
-function practiceTestsHref(params: { subject?: string | null; code?: string | null }) {
+/** Build practice-tests URL preserving subject / code / test-type filter. */
+function practiceTestsHref(params: {
+  subject?: string | null;
+  code?: string | null;
+  kind?: "MEQ" | "SBA" | string | null;
+}) {
   const qs = new URLSearchParams();
   if (params.subject?.trim()) qs.set("subject", params.subject.trim());
   if (params.code?.trim()) qs.set("code", params.code.trim());
+  const k = params.kind?.trim();
+  if (k === "MEQ" || k === "SBA") qs.set("kind", k);
   const q = qs.toString();
   return q ? `/practice-tests?${q}` : `/practice-tests`;
 }
 
 function PracticeTestsInner() {
+  const router = useRouter();
   const { user, profile, loading: authLoading } = useAuth();
   const searchParams = useSearchParams();
   const subjectFilter = searchParams.get("subject");
   const selectedCodeRaw = searchParams.get("code");
+  const kindParam = searchParams.get("kind");
+  const kindFilter: "MEQ" | "SBA" | null =
+    kindParam === "MEQ" || kindParam === "SBA" ? kindParam : null;
   const selectedCodeNorm =
     typeof selectedCodeRaw === "string" && selectedCodeRaw.trim()
       ? normalizeCourseCode(selectedCodeRaw)
@@ -114,6 +124,8 @@ function PracticeTestsInner() {
     return exams.filter((exam) => {
       if (subjectFilter && exam.subject !== subjectFilter) return false;
       if (departmentFilter && exam.deptName !== departmentFilter) return false;
+      if (kindFilter === "MEQ" && exam.kind !== "MEQ") return false;
+      if (kindFilter === "SBA" && exam.kind !== "SBA") return false;
       if (
         normalizedCodeSearch &&
         !exam.subjectCode.toLowerCase().includes(normalizedCodeSearch)
@@ -122,7 +134,7 @@ function PracticeTestsInner() {
       }
       return true;
     });
-  }, [exams, subjectFilter, departmentFilter, normalizedCodeSearch]);
+  }, [exams, subjectFilter, departmentFilter, kindFilter, normalizedCodeSearch]);
 
   /** Unique course codes for the hierarchical first step (ordered). */
   const codeCatalog = useMemo(() => {
@@ -192,6 +204,7 @@ function PracticeTestsInner() {
       }
 
       const rpcName = "list_approved_practice_tests_catalog_json";
+      const groupedSbaRpc = "list_grouped_practice_sba_ids_json";
       const rpcRes = await supabase.rpc(rpcName);
 
       let list: ExamListItem[] = [];
@@ -265,6 +278,19 @@ function PracticeTestsInner() {
             });
           }
         }
+        let groupedSbaIds = new Set<string>();
+        const idRes = await supabase.rpc(groupedSbaRpc);
+        if (!idRes.error && idRes.data != null) {
+          const raw = idRes.data as unknown;
+          if (Array.isArray(raw)) {
+            for (const id of raw) {
+              if (typeof id === "string") groupedSbaIds.add(id);
+            }
+          }
+        } else {
+          groupedSbaIds = new Set();
+        }
+
         if (!sbaRes.error && sbaRes.data) {
           for (const row of sbaRes.data) {
             const r = row as {
@@ -275,6 +301,7 @@ function PracticeTestsInner() {
               public_code?: string | null;
               departments?: unknown;
             };
+            if (!groupedSbaIds.has(r.id)) continue;
             list.push({
               id: r.id,
               kind: "SBA",
@@ -307,7 +334,7 @@ function PracticeTestsInner() {
         {SUBJECTS.map((subj) => (
           <Link
             key={subj}
-            href={practiceTestsHref({ subject: subj, code: null })}
+            href={practiceTestsHref({ subject: subj, code: null, kind: kindFilter })}
             className={`text-sm px-3 py-1.5 rounded-lg border transition ${
               subjectFilter === subj
                 ? "bg-blue-900 text-white border-blue-800"
@@ -318,7 +345,7 @@ function PracticeTestsInner() {
           </Link>
         ))}
         <Link
-          href={practiceTestsHref({ subject: null, code: null })}
+          href={practiceTestsHref({ subject: null, code: null, kind: kindFilter })}
           className={`text-sm px-3 py-1.5 rounded-lg border transition ${
             !subjectFilter
               ? "bg-gray-700 text-white border-gray-800"
@@ -363,9 +390,11 @@ function PracticeTestsInner() {
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
         <h1 className="text-3xl font-bold text-blue-800 tracking-tight">Practice tests</h1>
         <p className="mt-2 text-sm text-gray-600 max-w-2xl">
-          Committee-approved <strong className="font-semibold">practice</strong> exams only (not scored real
-          tests). Pick your subject area, then a <strong className="font-semibold">course code</strong>, then
-          open MEQ or SBA. Any enrolled student may use these.
+          Committee-approved <strong className="font-semibold">practice</strong> exams only (not scored real tests).
+          <strong className="font-semibold"> MEQ</strong> lists every approved practice case.{" "}
+          <strong className="font-semibold">SBA</strong> practice appears only after staff add it to a{" "}
+          <span className="font-medium">test group</span> (Dashboard → Test assignments). Filter by course code and
+          type below.
         </p>
         {subjectFilter ? (
           <p className="mt-1 text-sm text-gray-700">
@@ -387,7 +416,7 @@ function PracticeTestsInner() {
                 Re-login
               </Link>
               <Link
-                href={practiceTestsHref({ subject: subjectFilter, code: selectedCodeRaw })}
+                href={practiceTestsHref({ subject: subjectFilter, code: selectedCodeRaw, kind: kindFilter })}
                 className="px-4 py-2 rounded border border-blue-400 text-blue-900 font-semibold"
               >
                 Retry page
@@ -440,9 +469,13 @@ function PracticeTestsInner() {
                 After review, set status to <strong>Approved</strong> on that same practice row.
               </li>
               <li>
-                In Supabase, run migration <span className="font-mono">029</span>{' '}
-                (<span className="font-mono">list_approved_practice_tests_catalog_json</span>) so the catalog loads
-                reliably for students.
+                In Supabase, run migrations <span className="font-mono">029</span> (catalog RPC) and{" "}
+                <span className="font-mono">035</span> (<span className="font-mono">student_can_access_sba_test</span> +
+                grouped SBA practice rules).
+              </li>
+              <li>
+                <strong>SBA practice</strong> is listed only after the test is added to a bundle under{" "}
+                <strong>Dashboard → Test assignments</strong> (test groups).
               </li>
               <li>
                 Deploy the latest frontend—your hosted page must match this branch (subject → course codes → MEQ /
@@ -453,7 +486,7 @@ function PracticeTestsInner() {
         ) : selectedCodeNorm && testsForSelectedCode.length === 0 ? (
           <div className="space-y-4">
             <Link
-              href={practiceTestsHref({ subject: subjectFilter, code: null })}
+              href={practiceTestsHref({ subject: subjectFilter, code: null, kind: kindFilter })}
               className="text-blue-700 text-sm font-semibold hover:underline inline-block"
             >
               ← Back to course codes
@@ -466,7 +499,7 @@ function PracticeTestsInner() {
           <div className="space-y-8">
             <div>
               <Link
-                href={practiceTestsHref({ subject: subjectFilter, code: null })}
+                href={practiceTestsHref({ subject: subjectFilter, code: null, kind: kindFilter })}
                 className="text-blue-700 text-sm font-semibold hover:underline"
               >
                 ← Back to course codes
@@ -478,6 +511,11 @@ function PracticeTestsInner() {
                 ) : null}
               </h2>
               <p className="text-sm text-gray-600 mt-1">Choose MEQ or SBA, then start a practice exam.</p>
+              {kindFilter ? (
+                <p className="text-xs text-blue-900 bg-blue-50 border border-blue-100 rounded px-2 py-1.5 inline-block mt-2">
+                  Filter: <span className="font-semibold">{kindFilter} only</span> (clear in course code view).
+                </p>
+              ) : null}
             </div>
 
             <section className="space-y-3">
@@ -491,8 +529,15 @@ function PracticeTestsInner() {
 
             <section className="space-y-3">
               <h3 className="text-lg font-bold text-gray-900 border-b border-blue-200 pb-2">SBA</h3>
+              <p className="text-xs text-gray-600 -mt-2 mb-1">
+                Only SBAs attached to a <strong className="font-medium">staff test group</strong> bundle are listed (
+                Dashboard → Test assignments → test groups).
+              </p>
               {sbaTestsForCode.length === 0 ? (
-                <p className="text-sm text-gray-500 italic">No SBA practice items for this code.</p>
+                <p className="text-sm text-gray-500 italic">
+                  No grouped SBA practice items for this code (add the test to a group, or approve ungrouped drafts
+                  elsewhere).
+                </p>
               ) : (
                 <div className="grid gap-5">{sbaTestsForCode.map(renderTestCard)}</div>
               )}
@@ -500,7 +545,7 @@ function PracticeTestsInner() {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label htmlFor="dept-filter" className="block text-sm font-medium text-gray-700 mb-1">
                   Department
@@ -520,23 +565,47 @@ function PracticeTestsInner() {
               </div>
               <div>
                 <label htmlFor="code-search-practice" className="block text-sm font-medium text-gray-700 mb-1">
-                  Search course code
+                  Search subject / course code
                 </label>
                 <input
                   id="code-search-practice"
                   type="text"
                   value={subjectCodeSearch}
                   onChange={(e) => setSubjectCodeSearch(e.target.value)}
-                  placeholder="e.g. CHMD 7404"
+                  placeholder="e.g. CHMD 7404 or partial code"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
+              </div>
+              <div>
+                <label htmlFor="kind-filter-practice" className="block text-sm font-medium text-gray-700 mb-1">
+                  Test type
+                </label>
+                <select
+                  id="kind-filter-practice"
+                  value={kindFilter ?? "ALL"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    router.replace(
+                      practiceTestsHref({
+                        subject: subjectFilter,
+                        code: null,
+                        kind: v === "ALL" ? null : v,
+                      }),
+                    );
+                  }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  <option value="ALL">All types (MEQ + grouped SBA)</option>
+                  <option value="MEQ">MEQ only</option>
+                  <option value="SBA">SBA only (grouped)</option>
+                </select>
               </div>
             </div>
 
             <div>
               <h2 className="text-lg font-bold text-gray-900 mb-2">Course codes</h2>
               <p className="text-sm text-gray-600 mb-4">
-                Select a code to see MEQ and SBA practice exams for that course.
+                Select a code to drill into tests. Course cards respect department, code search, and test type above.
               </p>
               {codeCatalog.length === 0 ? (
                 <div className="text-gray-500 text-center py-10 border border-dashed border-gray-300 rounded-lg">
@@ -556,6 +625,7 @@ function PracticeTestsInner() {
                           href={practiceTestsHref({
                             subject: subjectFilter,
                             code: row.display,
+                            kind: kindFilter,
                           })}
                           className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border border-blue-200 rounded-xl px-4 py-3 bg-blue-50/50 hover:bg-blue-100 transition"
                         >
