@@ -514,7 +514,7 @@ export default function StudentMeqExamPage() {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-xl mx-auto mt-8 px-4 flex flex-col gap-8">
+      <main className="flex-1 w-full max-w-xl mx-auto mt-8 px-4 pb-36 flex flex-col gap-8">
         <section className="bg-blue-100 border border-blue-300 rounded-xl shadow-sm p-6 mb-2 space-y-3">
           {test.first_page_stem ? (
             <p className="text-gray-800 text-base whitespace-pre-line">{test.first_page_stem}</p>
@@ -523,24 +523,9 @@ export default function StudentMeqExamPage() {
         </section>
 
         <section className="bg-white border border-gray-100 rounded-xl shadow px-6 py-8 flex flex-col gap-4">
-          <div className="text-sm text-blue-900 mb-2 font-semibold">
-            Stage {currentStageIndex + 1} of {stages.length}
-            {isCurrentLocked ? " — submitted" : ""}
-          </div>
-          <div className="text-sm font-semibold text-gray-700">
-            {remainingSeconds != null ? (
-              <>
-                Time left for this stage:{" "}
-                <span className={`tabular-nums ${remainingSeconds <= 30 ? "text-red-600" : "text-blue-800"}`}>
-                  {formatCountdown(remainingSeconds)}
-                </span>
-              </>
-            ) : (
-              <span className="font-normal text-gray-600">
-                This stage has no countdown — use the exam clock above.
-              </span>
-            )}
-          </div>
+          <p className="text-xs text-gray-500 -mt-1">
+            Stage timers stay visible at the bottom of your screen while you scroll.
+          </p>
 
           {currentStage.stage_information ? (
             <div className="text-base text-gray-800 whitespace-pre-line border-l-2 border-blue-400 pl-3 mb-2">
@@ -633,6 +618,66 @@ export default function StudentMeqExamPage() {
           </button>
         </section>
       </main>
+
+      <div
+        className="fixed bottom-0 left-0 right-0 z-50 flex justify-center pointer-events-none px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white to-transparent"
+        aria-live="polite"
+        aria-label="Exam timers"
+      >
+        <div className="pointer-events-auto w-full max-w-xl rounded-t-xl border border-blue-200 bg-white/95 backdrop-blur-md shadow-[0_-4px_24px_rgba(15,23,42,0.12)] px-4 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+            <div className="text-sm font-semibold text-blue-900">
+              Stage {currentStageIndex + 1} of {stages.length}
+              {isCurrentLocked ? (
+                <span className="font-normal text-slate-600"> — submitted</span>
+              ) : null}
+            </div>
+            <div className="text-sm font-semibold text-gray-800 sm:text-right">
+              {remainingSeconds != null ? (
+                <>
+                  <span className="text-gray-600 font-medium">This stage: </span>
+                  <span
+                    className={`tabular-nums text-base ${
+                      remainingSeconds <= 30 ? "text-red-600 font-bold" : "text-blue-800"
+                    }`}
+                  >
+                    {formatCountdown(remainingSeconds)}
+                  </span>
+                </>
+              ) : (
+                <span className="font-normal text-gray-600 text-sm">
+                  No per-stage timer — use exam clocks below.
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600 border-t border-slate-100 pt-2">
+            <span>
+              Time on exam:{" "}
+              <span className="tabular-nums font-semibold text-slate-800">
+                {formatCountdown(elapsedSessionSeconds)}
+              </span>
+            </span>
+            {overallRemainingSeconds != null ? (
+              <span>
+                Overall left:{" "}
+                <span
+                  className={`tabular-nums font-semibold ${
+                    overallRemainingSeconds <= 120 ? "text-red-600" : "text-slate-800"
+                  }`}
+                >
+                  {formatCountdown(overallRemainingSeconds)}
+                </span>
+                {test.time_limit_minutes != null ? (
+                  <span className="text-gray-500 font-normal"> ({test.time_limit_minutes} min)</span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-gray-500">No overall time cap on this exam.</span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
