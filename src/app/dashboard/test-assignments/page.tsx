@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { TEST_ASSIGNMENT_ROLES } from "@/lib/auth/roles";
 import { getAuthUserId } from "@/lib/auth/session";
 import { useRoleGate } from "@/hooks/useRoleGate";
+import { type BundleTrack, rowMatchesBundleTrack } from "@/lib/staff/testBundle";
 
 function isoToDatetimeLocalValue(iso: string): string {
   const d = new Date(iso);
@@ -16,6 +17,13 @@ function isoToDatetimeLocalValue(iso: string): string {
 
 type AssessmentPurpose = "formative" | "summative";
 
+type BundleSelectionScope = {
+  course_code: string;
+  test_year: number;
+  exam_format: "MEQ" | "SBA";
+  track: BundleTrack;
+};
+
 type TestGroup = {
   id: string;
   name: string;
@@ -23,6 +31,7 @@ type TestGroup = {
   filter_course_code: string | null;
   filter_exam_format: "MEQ" | "SBA" | null;
   filter_assessment_purpose: AssessmentPurpose | null;
+  bundle_selection_scope: BundleSelectionScope | null;
 };
 type TestGroupItem = {
   id: string;
@@ -44,6 +53,30 @@ type Assignment = {
 
 type AsgEditDraft = { winStart: string; winEnd: string; examLimit: string };
 
+type BundleCand =
+  | {
+      kind: "MEQ";
+      id: string;
+      subject: string;
+      code: string;
+      public_code: string | null;
+      test_year: number;
+      review_status: string;
+      test_function: string;
+      assessment_purpose: string;
+    }
+  | {
+      kind: "SBA";
+      id: string;
+      subject: string;
+      code: string;
+      public_code: string | null;
+      test_year: number;
+      review_status: string;
+      test_function: string;
+      assessment_purpose: string;
+    };
+
 export default function TestAssignmentsPage() {
   const { ready: accessOk, loading: gateLoading, role } = useRoleGate(TEST_ASSIGNMENT_ROLES, {
     noUserRedirect: "/login",
@@ -55,13 +88,20 @@ export default function TestAssignmentsPage() {
   const [tgItems, setTgItems] = useState<Record<string, TestGroupItem[]>>({});
   const [newTgName, setNewTgName] = useState("");
   const [newTgCourse, setNewTgCourse] = useState("");
+  const [newTgYear, setNewTgYear] = useState(String(new Date().getFullYear()));
+  /** Practice pool vs scheduled real exams */
+  const [newTgBucket, setNewTgBucket] = useState<"practice" | "real">("real");
+  const [newTgRealPurpose, setNewTgRealPurpose] = useState<AssessmentPurpose>("summative");
   const [newTgFormat, setNewTgFormat] = useState<"MEQ" | "SBA">("MEQ");
-  const [newTgPurpose, setNewTgPurpose] = useState<AssessmentPurpose>("summative");
+
+  const resolvedBundleTrack = (): BundleTrack =>
+    newTgBucket === "practice" ? "practice" : newTgRealPurpose === "formative" ? "formative" : "summative";
   const [courses, setCourses] = useState<{ course_code: string; course_title: string | null }[]>([]);
 
-  const [pickTg, setPickTg] = useState<string>("");
-  const [addMeqId, setAddMeqId] = useState("");
-  const [addSbaId, setAddSbaId] = useState("");
+  const [bundleCandidates, setBundleCandidates] = useState<BundleCand[]>([]);
+  const [selectedBundleKeys, setSelectedBundleKeys] = useState<Set<string>>(() => new Set());
+  const [loadingBundleCandidates, setLoadingBundleCandidates] = useState(false);
+  const [creatingBundle, setCreatingBundle] = useState(false);
 
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
   const [newSgName, setNewSgName] = useState("");
@@ -94,7 +134,7 @@ export default function TestAssignmentsPage() {
       supabase
         .from("staff_test_groups")
         .select(
-          "id, name, created_at, filter_course_code, filter_exam_format, filter_assessment_purpose",
+          "id, name, created_at, filter_course_code, filter_exam_format, filter_assessment_purpose, bundle_selection_scope",
         )
         .order("created_at", { ascending: false }),
       supabase.from("staff_student_groups").select("id, name, created_at").order("created_at", { ascending: false }),
@@ -105,7 +145,23 @@ export default function TestAssignmentsPage() {
       supabase.from("course_catalog").select("course_code, course_title").order("course_code").limit(900),
     ]);
 
-    setTestGroups(((tg ?? []) as TestGroup[]) || []);
+    setTestGroups(
+      (((tg ?? []) as unknown[]) || []).map((row) => {
+        const r = row as Record<string, unknown>;
+        return {
+          id: r.id as string,
+          name: r.name as string,
+          created_at: r.created_at as string,
+          filter_course_code: (r.filter_course_code as string | null) ?? null,
+          filter_exam_format: (r.filter_exam_format as "MEQ" | "SBA" | null) ?? null,
+          filter_assessment_purpose: (r.filter_assessment_purpose as AssessmentPurpose | null) ?? null,
+          bundle_selection_scope:
+            r.bundle_selection_scope && typeof r.bundle_selection_scope === "object"
+              ? (r.bundle_selection_scope as BundleSelectionScope)
+              : null,
+        };
+      }),
+    );
     setCourses((cat ?? []) as { course_code: string; course_title: string | null }[]);
     setStudentGroups((sg as StudentGroup[]) || []);
     const asgRows = (asg as Assignment[]) || [];
@@ -178,6 +234,124 @@ export default function TestAssignmentsPage() {
     void load();
   }, [load]);
 
+  const loadBundleCandidates = async () => {
+    setErr(null);
+    setMsg(null);
+    const code = newTgCourse.trim();
+    const y = parseInt(newTgYear, 10);
+    if (!code) {
+      setErr("Choose a catalog subject code.");
+      return;
+    }
+    if (!Number.isFinite(y) || y < 2000 || y > 2100) {
+      setErr("Enter a valid year between 2000 and 2100.");
+      return;
+    }
+    const tr = resolvedBundleTrack();
+    setLoadingBundleCandidates(true);
+    setBundleCandidates([]);
+    setSelectedBundleKeys(new Set());
+    let nextList: BundleCand[] = [];
+    try {
+      if (newTgFormat === "MEQ") {
+        const { data, error } = await supabase
+          .from("meq_tests")
+          .select(
+            "id, subject, course_code, public_code, test_year, review_status, test_function, assessment_purpose",
+          )
+          .eq("course_code", code)
+          .eq("test_year", y)
+          .order("public_code", { ascending: true });
+        if (error) {
+          setErr(error.message);
+          return;
+        }
+        const rows = (data || []) as {
+          id: string;
+          subject: string;
+          course_code: string;
+          public_code: string | null;
+          test_year: number;
+          review_status: string;
+          test_function: string;
+          assessment_purpose: string;
+        }[];
+        nextList = rows
+          .filter((r) => rowMatchesBundleTrack(r, tr))
+          .map((r) => ({
+            kind: "MEQ" as const,
+            id: r.id,
+            subject: r.subject,
+            code: r.course_code,
+            public_code: r.public_code,
+            test_year: r.test_year,
+            review_status: r.review_status,
+            test_function: r.test_function,
+            assessment_purpose: r.assessment_purpose,
+          }));
+      } else {
+        const { data, error } = await supabase
+          .from("sba_tests")
+          .select(
+            "id, subject, subject_code, public_code, test_year, review_status, test_function, assessment_purpose",
+          )
+          .eq("subject_code", code)
+          .eq("test_year", y)
+          .order("public_code", { ascending: true });
+        if (error) {
+          setErr(error.message);
+          return;
+        }
+        const rows = (data || []) as {
+          id: string;
+          subject: string;
+          subject_code: string;
+          public_code: string | null;
+          test_year: number;
+          review_status: string;
+          test_function: string;
+          assessment_purpose: string;
+        }[];
+        nextList = rows
+          .filter((r) => rowMatchesBundleTrack(r, tr))
+          .map((r) => ({
+            kind: "SBA" as const,
+            id: r.id,
+            subject: r.subject,
+            code: r.subject_code,
+            public_code: r.public_code,
+            test_year: r.test_year,
+            review_status: r.review_status,
+            test_function: r.test_function,
+            assessment_purpose: r.assessment_purpose,
+          }));
+      }
+      setBundleCandidates(nextList);
+      setMsg(
+        nextList.length === 0
+          ? "No tests match these filters (check year, track, and code)."
+          : `Found ${nextList.length} matching test(s). Select rows to include, then create the bundle.`,
+      );
+    } finally {
+      setLoadingBundleCandidates(false);
+    }
+  };
+
+  const toggleBundleKey = (key: string) => {
+    setSelectedBundleKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const selectAllBundleCandidates = () => {
+    setSelectedBundleKeys(new Set(bundleCandidates.map((c) => `${c.kind}:${c.id}`)));
+  };
+
+  const clearBundleSelection = () => setSelectedBundleKeys(new Set());
+
   const createTestGroup = async () => {
     setErr(null);
     setMsg(null);
@@ -190,108 +364,72 @@ export default function TestAssignmentsPage() {
       setErr("Choose a catalog subject code.");
       return;
     }
+    const y = parseInt(newTgYear, 10);
+    if (!Number.isFinite(y) || y < 2000 || y > 2100) {
+      setErr("Enter a valid year between 2000 and 2100.");
+      return;
+    }
+    if (selectedBundleKeys.size === 0) {
+      setErr('Click "Show matching tests" and select at least one exam for this bundle.');
+      return;
+    }
     const uid = await getAuthUserId();
     if (!uid) return;
-    const { error } = await supabase
-      .from("staff_test_groups")
-      .insert({
-        name,
-        created_by: uid,
-        filter_course_code: newTgCourse.trim(),
-        filter_exam_format: newTgFormat,
-        filter_assessment_purpose: newTgPurpose,
-      })
-      .select("id")
-      .single();
-    if (error) {
-      setErr(error.message || "Could not create. Apply migration 037 (bundle filters).");
-      return;
-    }
-    setNewTgName("");
-    setNewTgCourse("");
-    setNewTgFormat("MEQ");
-    setNewTgPurpose("summative");
-    setMsg("Test bundle created — open it to see matching tests.");
-    void load();
-  };
-
-  const addTestToGroup = async () => {
-    setErr(null);
-    setMsg(null);
-    if (!pickTg) {
-      setErr("Choose a test group.");
-      return;
-    }
-    const gSel = testGroups.find((x) => x.id === pickTg);
-    if (
-      gSel?.filter_course_code &&
-      gSel?.filter_exam_format &&
-      gSel?.filter_assessment_purpose
-    ) {
-      setErr(
-        "This bundle uses catalog scope (subject + format + assessment). Matching tests appear automatically — no UUID attachment.",
-      );
-      return;
-    }
-    const meq = addMeqId.trim();
-    const sba = addSbaId.trim();
-    if ((meq && sba) || (!meq && !sba)) {
-      setErr("Provide exactly one UUID: either a MEQ test id OR an SBA test id.");
-      return;
-    }
-    if (meq) {
-      const { data: row, error: fe } = await supabase
-        .from("meq_tests")
-        .select("id, review_status, test_function")
-        .eq("id", meq)
-        .maybeSingle();
-      if (fe || !row) {
-        setErr("Could not find that MEQ test, or you have no access.");
-        return;
-      }
-      if (row.test_function !== "real_test") {
-        setErr("Test session bundles only accept MEQ rows with Test function = Real test (practice belongs in Practice tests).");
-        return;
-      }
-      if (row.review_status !== "approved") {
-        setErr("Only committee-approved tests can be scheduled. Wait for approval or pick another id.");
-        return;
-      }
-    } else if (sba) {
-      const { data: row, error: fe } = await supabase
-        .from("sba_tests")
-        .select("id, review_status, test_function")
-        .eq("id", sba)
-        .maybeSingle();
-      if (fe || !row) {
-        setErr("Could not find that SBA test, or you have no access.");
-        return;
-      }
-      if (row.test_function !== "real_test") {
-        setErr("Test session bundles only accept SBA rows with Test function = Real test.");
-        return;
-      }
-      if (row.review_status !== "approved") {
-        setErr("Only committee-approved tests can be scheduled.");
-        return;
-      }
-    }
-    const row: { test_group_id: string; meq_test_id?: string; sba_test_id?: string; sort_order: number } = {
-      test_group_id: pickTg,
-      sort_order: (tgItems[pickTg]?.length ?? 0),
+    const tr = resolvedBundleTrack();
+    const scope: BundleSelectionScope = {
+      course_code: newTgCourse.trim(),
+      test_year: y,
+      exam_format: newTgFormat,
+      track: tr,
     };
-    if (meq) row.meq_test_id = meq;
-    else row.sba_test_id = sba;
-
-    const { error } = await supabase.from("staff_test_group_items").insert(row);
-    if (error) {
-      setErr(error.message);
-      return;
+    setCreatingBundle(true);
+    try {
+      const { data: inserted, error } = await supabase
+        .from("staff_test_groups")
+        .insert({
+          name,
+          created_by: uid,
+          filter_course_code: null,
+          filter_exam_format: null,
+          filter_assessment_purpose: null,
+          bundle_selection_scope: scope,
+        })
+        .select("id")
+        .single();
+      if (error) {
+        setErr(
+          error.message.includes("bundle_selection_scope")
+            ? "Apply database migration 040 (bundle_selection_scope column), then try again."
+            : error.message || "Could not create bundle.",
+        );
+        return;
+      }
+      const gid = (inserted as { id: string }).id;
+      const orderedKeys = [...selectedBundleKeys].sort();
+      const itemRows = orderedKeys.map((key, sort_order) => {
+        const [kind, id] = key.split(":");
+        if (kind === "MEQ") return { test_group_id: gid, meq_test_id: id, sort_order };
+        return { test_group_id: gid, sba_test_id: id, sort_order };
+      });
+      const { error: itemErr } = await supabase.from("staff_test_group_items").insert(itemRows);
+      if (itemErr) {
+        setErr(itemErr.message || "Bundle created but attaching tests failed — remove the empty group or fix in SQL.");
+        void load();
+        return;
+      }
+      setNewTgName("");
+      setNewTgCourse("");
+      setNewTgYear(String(new Date().getFullYear()));
+      setNewTgBucket("real");
+      setNewTgRealPurpose("summative");
+      setNewTgFormat("MEQ");
+      setBundleCandidates([]);
+      setSelectedBundleKeys(new Set());
+      setMsg(`Test bundle created with ${orderedKeys.length} exam(s).`);
+      void load();
+    } finally {
+      setCreatingBundle(false);
     }
-    setAddMeqId("");
-    setAddSbaId("");
-    setMsg("Test added to group.");
-    void load();
   };
 
   const createStudentGroup = async () => {
@@ -519,15 +657,15 @@ export default function TestAssignmentsPage() {
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mt-2">Test season assignments</h1>
           <p className="text-gray-600 text-sm mt-1">
-            Build reusable <strong>test groups</strong> (only committee-approved{" "}
-            <strong>real</strong> tests) and <strong>student groups</strong>, then create scheduling rows with{" "}
-            <strong>required window</strong>, <strong>exam time limit</strong>, and recipient. Students discover
-            assigned tests on <strong>Test taking</strong> when you enable that link below.
+            Build reusable <strong>test groups</strong> (pick exams by code, year, and track — pending or approved) and{" "}
+            <strong>student groups</strong>, then create scheduling rows with <strong>required window</strong>,{" "}
+            <strong>exam time limit</strong>, and recipient. Students only launch <strong>approved</strong> tests from{" "}
+            <strong>Test taking</strong>; pending rows stay queued until committee approval.
           </p>
           <p className="text-orange-900 text-sm mt-2 bg-orange-100 border border-orange-300 rounded px-3 py-2">
             Requires migrations <code className="font-mono">020_*</code> (tables), <code className="font-mono">021_*</code>{" "}
-            (RLS), <code className="font-mono">033_*</code> (exam minutes), and <code className="font-mono">037_*</code>{" "}
-            (scoped bundles + public test ids with MEQ/SBA in the code).
+            (RLS), <code className="font-mono">033_*</code> (exam minutes), <code className="font-mono">037_*</code>{" "}
+            (public ids), and <code className="font-mono">040_*</code> (bundle selection snapshot — optional metadata).
           </p>
         </div>
 
@@ -559,15 +697,15 @@ export default function TestAssignmentsPage() {
         <section className="border rounded-lg p-6 space-y-4">
           <h2 className="text-xl font-bold text-gray-900">1. Test groups (bundles)</h2>
           <p className="text-sm text-gray-600">
-            New bundles are <strong>scoped</strong>: pick a catalog code, MEQ vs SBA, and whether this bundle is for{" "}
-            <strong>formative</strong> or <strong>summative</strong> real tests. Every{" "}
-            <strong className="font-medium">approved</strong> real test whose course and assessment purpose match appears
-            in the bundle (and in Test taking once scheduled) — no UUID copy/paste.
+            Set <strong>name</strong>, <strong>catalog code</strong>, <strong>year</strong>, <strong>track</strong>, and{" "}
+            <strong>exam format</strong>, then load matching tests (pending or approved). Select one or more rows and
+            create the bundle — only those exams are included when you schedule an assignment. Older{" "}
+            <strong>auto-scoped</strong> bundles (subject + format + assessment, no manual picks) still work unchanged.
           </p>
-          <div className="grid md:grid-cols-2 gap-4 items-end">
+          <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600">Bundle name</label>
+                <label className="block text-xs font-medium text-gray-600">Name</label>
                 <input
                   className="border rounded px-3 py-2 w-full mt-1"
                   value={newTgName}
@@ -591,8 +729,67 @@ export default function TestAssignmentsPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600">Year</label>
+                <input
+                  type="number"
+                  className="border rounded px-3 py-2 w-full mt-1 max-w-[11rem]"
+                  min={2000}
+                  max={2100}
+                  value={newTgYear}
+                  onChange={(e) => setNewTgYear(e.target.value)}
+                />
+              </div>
             </div>
             <div className="space-y-3">
+              <div>
+                <span className="block text-xs font-medium text-gray-600">Track</span>
+                <div className="flex flex-col gap-2 mt-2 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgBucket"
+                      checked={newTgBucket === "practice"}
+                      onChange={() => setNewTgBucket("practice")}
+                    />
+                    Practice pool
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="newTgBucket"
+                      checked={newTgBucket === "real"}
+                      onChange={() => setNewTgBucket("real")}
+                    />
+                    Real exam
+                  </label>
+                </div>
+              </div>
+              {newTgBucket === "real" ? (
+                <div>
+                  <span className="block text-xs font-medium text-gray-600">Formative / Summative</span>
+                  <div className="flex gap-4 mt-2 text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="newTgRealPurpose"
+                        checked={newTgRealPurpose === "formative"}
+                        onChange={() => setNewTgRealPurpose("formative")}
+                      />
+                      Formative
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="newTgRealPurpose"
+                        checked={newTgRealPurpose === "summative"}
+                        onChange={() => setNewTgRealPurpose("summative")}
+                      />
+                      Summative
+                    </label>
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <span className="block text-xs font-medium text-gray-600">Exam format</span>
                 <div className="flex gap-4 mt-2 text-sm">
@@ -616,99 +813,90 @@ export default function TestAssignmentsPage() {
                   </label>
                 </div>
               </div>
-              <div>
-                <span className="block text-xs font-medium text-gray-600">Bundle track (filters real tests)</span>
-                <div className="flex gap-4 mt-2 text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="newTgPurpose"
-                      checked={newTgPurpose === "formative"}
-                      onChange={() => setNewTgPurpose("formative")}
-                    />
-                    Formative
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="newTgPurpose"
-                      checked={newTgPurpose === "summative"}
-                      onChange={() => setNewTgPurpose("summative")}
-                    />
-                    Summative
-                  </label>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  This only chooses which approved real tests belong in the bundle (same labels as committee purpose on
-                  each test — we are not changing the authoring wizard).
-                </p>
-              </div>
               <button
                 type="button"
-                className="bg-blue-800 text-white px-4 py-2 rounded font-semibold"
-                onClick={() => void createTestGroup()}
+                className="bg-slate-700 text-white px-4 py-2 rounded font-semibold text-sm disabled:opacity-50"
+                disabled={loadingBundleCandidates}
+                onClick={() => void loadBundleCandidates()}
               >
-                Create bundle
+                {loadingBundleCandidates ? "Loading…" : "Show matching tests"}
               </button>
             </div>
           </div>
-          <div className="border-t pt-4 space-y-2">
-            <h3 className="text-sm font-semibold text-gray-800">Legacy: attach by test UUID</h3>
-            <p className="text-xs text-gray-600">
-              Older bundles keep empty scope fields and still use explicit MEQ/SBA ids (one per row).
-            </p>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600">Target group</label>
-                <select
-                  className="border rounded px-3 py-2 w-full mt-1"
-                  value={pickTg}
-                  onChange={(e) => setPickTg(e.target.value)}
-                >
-                  <option value="">Select group…</option>
-                  {testGroups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
+
+          {bundleCandidates.length > 0 ? (
+            <div className="border rounded-lg overflow-hidden space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gray-50 text-sm">
+                <span>
+                  {selectedBundleKeys.size} of {bundleCandidates.length} selected
+                </span>
+                <div className="flex gap-2">
+                  <button type="button" className="text-blue-800 text-xs font-semibold underline" onClick={selectAllBundleCandidates}>
+                    Select all
+                  </button>
+                  <button type="button" className="text-gray-700 text-xs font-semibold underline" onClick={clearBundleSelection}>
+                    Clear
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-col gap-2">
-                {pickTg &&
-                testGroups.find((x) => x.id === pickTg)?.filter_course_code ? (
-                  <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                    Selected bundle is scoped — open it from the list below to see matching tests.
-                  </p>
-                ) : (
-                  <>
-                    <input
-                      className="border rounded px-3 py-2 font-mono text-sm"
-                      placeholder="MEQ UUID · approved · Real test only"
-                      value={addMeqId}
-                      onChange={(e) => setAddMeqId(e.target.value)}
-                    />
-                    <input
-                      className="border rounded px-3 py-2 font-mono text-sm"
-                      placeholder="SBA test UUID (leave MEQ empty if using this)"
-                      value={addSbaId}
-                      onChange={(e) => setAddSbaId(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="bg-gray-800 text-white px-3 py-2 rounded text-sm font-semibold w-fit"
-                      onClick={() => void addTestToGroup()}
-                    >
-                      Add test to group
-                    </button>
-                  </>
-                )}
+              <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100 text-left sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 w-10" />
+                      <th className="px-3 py-2">Public ID</th>
+                      <th className="px-3 py-2">Subject</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Function</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bundleCandidates.map((c) => {
+                      const key = `${c.kind}:${c.id}`;
+                      return (
+                        <tr key={key} className="border-t">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedBundleKeys.has(key)}
+                              onChange={() => toggleBundleKey(key)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs">{c.public_code ?? "—"}</td>
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{c.subject}</div>
+                            <div className="text-xs text-gray-500">
+                              {c.kind} · {c.code}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-xs">{c.review_status}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {c.test_function === "practice" ? "Practice" : `Real · ${c.assessment_purpose}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-3 pb-3">
+                <button
+                  type="button"
+                  className="bg-blue-800 text-white px-4 py-2 rounded font-semibold text-sm disabled:opacity-50"
+                  disabled={creatingBundle || selectedBundleKeys.size === 0}
+                  onClick={() => void createTestGroup()}
+                >
+                  {creatingBundle ? "Creating…" : `Create bundle (${selectedBundleKeys.size} test${selectedBundleKeys.size === 1 ? "" : "s"})`}
+                </button>
               </div>
             </div>
-          </div>
+          ) : null}
+
           <ul className="text-sm space-y-2 text-gray-700">
             {testGroups.map((g) => {
               const scoped =
                 g.filter_course_code && g.filter_exam_format && g.filter_assessment_purpose;
+              const picked = !scoped && g.bundle_selection_scope;
               return (
                 <li key={g.id} className="border rounded p-2 bg-gray-50">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -722,11 +910,18 @@ export default function TestAssignmentsPage() {
                   </div>
                   {scoped ? (
                     <p className="text-xs text-gray-600 mt-1">
-                      <span className="font-mono">{g.filter_course_code}</span> · {g.filter_exam_format} ·{" "}
+                      Auto-scoped · <span className="font-mono">{g.filter_course_code}</span> · {g.filter_exam_format} ·{" "}
                       {g.filter_assessment_purpose}
                     </p>
+                  ) : picked ? (
+                    <p className="text-xs text-gray-600 mt-1">
+                      Picked tests ·{" "}
+                      <span className="font-mono">{g.bundle_selection_scope?.course_code}</span> · year{" "}
+                      {g.bundle_selection_scope?.test_year} · {g.bundle_selection_scope?.exam_format} · track{" "}
+                      {g.bundle_selection_scope?.track}
+                    </p>
                   ) : (
-                    <p className="text-xs text-amber-800 mt-1">Legacy manual UUID list</p>
+                    <p className="text-xs text-amber-800 mt-1">Older bundle (no scope snapshot)</p>
                   )}
                   <ul className="ml-4 mt-1 font-mono text-xs">
                     {!scoped
@@ -736,11 +931,14 @@ export default function TestAssignmentsPage() {
                           </li>
                         ))
                       : null}
-                    {!scoped && (tgItems[g.id] || []).length === 0 ? (
-                      <li className="text-gray-500">No manual rows</li>
+                    {!scoped && (tgItems[g.id] || []).length === 0 && !picked ? (
+                      <li className="text-gray-500">No rows listed (legacy empty)</li>
+                    ) : null}
+                    {!scoped && picked && (tgItems[g.id] || []).length === 0 ? (
+                      <li className="text-gray-500">Open bundle for test list</li>
                     ) : null}
                     {scoped ? (
-                      <li className="text-gray-600">Tests resolved from scope (see Open bundle)</li>
+                      <li className="text-gray-600">Tests resolved from auto-scope (see Open bundle)</li>
                     ) : null}
                   </ul>
                 </li>
