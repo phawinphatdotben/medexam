@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
@@ -13,10 +13,12 @@ type Row = {
   subject: string;
   subject_code: string;
   test_function: "practice" | "real_test";
+  assessment_purpose: "formative" | "summative";
   test_year: number;
   review_status: string;
   created_at: string;
   created_by: string | null;
+  public_code: string | null;
 };
 
 const statusClass: Record<string, string> = {
@@ -25,8 +27,9 @@ const statusClass: Record<string, string> = {
   rejected: "bg-red-100 text-red-900",
 };
 
-export default function MyTestsPage() {
-  const router = useRouter();
+function MyTestsPageInner() {
+  const searchParams = useSearchParams();
+  const createdHighlight = searchParams.get("created");
   const { ready: accessOk, loading: gateLoading, userId: uid, role: profileRole } = useRoleGate(
     STAFF_DASHBOARD_ROLES,
     { noUserRedirect: "/login", wrongRoleRedirect: "/practice-tests" },
@@ -40,11 +43,15 @@ export default function MyTestsPage() {
     setErr(null);
     const { data: sba, error: e1 } = await supabase
       .from("sba_tests")
-      .select("id, subject, subject_code, test_function, test_year, review_status, created_at, created_by")
+      .select(
+        "id, subject, subject_code, test_function, assessment_purpose, test_year, review_status, created_at, created_by, public_code",
+      )
       .order("created_at", { ascending: false });
     const { data: meq, error: e2 } = await supabase
       .from("meq_tests")
-      .select("id, subject, course_code, test_function, test_year, review_status, created_at, created_by")
+      .select(
+        "id, subject, course_code, test_function, assessment_purpose, test_year, review_status, created_at, created_by, public_code",
+      )
       .order("created_at", { ascending: false });
 
     if (e1 || e2) {
@@ -56,12 +63,20 @@ export default function MyTestsPage() {
     }
 
     const merged: Row[] = [
-      ...(sba || []).map((r) => ({ ...r, kind: "SBA" as const, created_by: r.created_by ?? null })),
+      ...(sba || []).map((r) => ({
+        ...r,
+        kind: "SBA" as const,
+        created_by: r.created_by ?? null,
+        public_code: r.public_code ?? null,
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
+      })),
       ...(meq || []).map((r) => ({
         ...r,
         subject_code: r.course_code,
         kind: "MEQ" as const,
         created_by: r.created_by ?? null,
+        public_code: r.public_code ?? null,
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
       })),
     ];
     merged.sort(
@@ -92,6 +107,13 @@ export default function MyTestsPage() {
           When the committee approves, status shows <strong>pass</strong> (approved) here and in
           sub-admin review tools.
         </p>
+        {createdHighlight && (
+          <div className="mb-4 p-3 rounded border border-green-200 bg-green-50 text-green-900 text-sm">
+            Test saved. Stable ID:{" "}
+            <span className="font-mono font-semibold">{createdHighlight}</span> — share this when talking to
+            committee or support.
+          </div>
+        )}
         <div className="mb-4 flex gap-2">
           <Link
             href="/dashboard/create"
@@ -116,6 +138,7 @@ export default function MyTestsPage() {
             <thead className="bg-gray-100">
               <tr>
                 <th className="px-4 py-2">Type</th>
+                <th className="px-4 py-2">Test ID</th>
                 <th className="px-4 py-2">Subject</th>
                 <th className="px-4 py-2">Code</th>
                 <th className="px-4 py-2">Function</th>
@@ -127,7 +150,7 @@ export default function MyTestsPage() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                     No tests yet. Create an SBA or MEQ from the staff dashboard.
                   </td>
                 </tr>
@@ -135,10 +158,15 @@ export default function MyTestsPage() {
                 rows.map((r) => (
                   <tr key={`${r.kind}-${r.id}`} className="border-t">
                     <td className="px-4 py-2 font-mono text-xs">{r.kind}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-slate-700">
+                      {r.public_code ? r.public_code : "—"}
+                    </td>
                     <td className="px-4 py-2">{r.subject}</td>
                     <td className="px-4 py-2 font-mono">{r.subject_code}</td>
                     <td className="px-4 py-2">
-                      {r.test_function === "practice" ? "Practice" : "Real test"}
+                      {r.test_function === "practice"
+                        ? "Practice · formative"
+                        : `Real test · ${r.assessment_purpose}`}
                     </td>
                     <td className="px-4 py-2">{r.test_year}</td>
                     <td className="px-4 py-2">
@@ -176,5 +204,19 @@ export default function MyTestsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function MyTestsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center pt-20">
+          <span className="text-gray-600">Loading...</span>
+        </div>
+      }
+    >
+      <MyTestsPageInner />
+    </Suspense>
   );
 }

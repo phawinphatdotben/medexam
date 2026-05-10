@@ -12,7 +12,7 @@ export type ParsedStageRow = {
   media_url: string;
 };
 
-function splitCsvLine(line: string): string[] {
+export function splitCsvLine(line: string): string[] {
   const out: string[] = [];
   let cur = "";
   let inQ = false;

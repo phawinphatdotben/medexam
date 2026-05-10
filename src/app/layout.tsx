@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AppProviders } from "@/components/AppProviders";
@@ -15,8 +15,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Medical Examination Plateform",
-  description: "Medical Examination Plateform",
+  title: "Medical Examination Platform",
+  description: "Medical Examination Platform",
+};
+
+/** Required so phones use device-width; otherwise layout/CSS width can stay “desktop-sized” and hide the mobile menu. */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({

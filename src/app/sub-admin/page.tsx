@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS } from "@/lib/subjects";
+import { committeeScopesMatchTest } from "@/lib/committeeScope";
 
 type TestRow = {
   id: string;
@@ -16,6 +17,18 @@ type TestRow = {
   committee_id: string | null;
   review_status: string;
   created_by: string | null;
+  test_function: "practice" | "real_test";
+  assessment_purpose: "formative" | "summative";
+  public_code?: string | null;
+};
+
+type CommitteeRow = {
+  id: string;
+  name: string;
+  subject: string | null;
+  test_year: number;
+  course_code: string;
+  purpose: "formative" | "summative";
 };
 
 type ScoreRow = {
@@ -44,13 +57,16 @@ export default function SubAdminPage() {
   );
   const [dataLoaded, setDataLoaded] = useState(false);
   const [myCommitteeIds, setMyCommitteeIds] = useState<string[]>([]);
-  const [committees, setCommittees] = useState<
-    { id: string; name: string; subject: string | null; test_year: number | null }[]
-  >([]);
-  const [profiles, setProfiles] = useState<{ id: string; email: string }[]>([]);
+  const [committees, setCommittees] = useState<CommitteeRow[]>([]);
+  const [catalogCourses, setCatalogCourses] = useState<{ course_code: string; course_title: string }[]>(
+    [],
+  );
   const [tests, setTests] = useState<TestRow[]>([]);
-  const [newC, setNewC] = useState({ name: "", subject: "" as string, test_year: "" as string });
-  const [addMember, setAddMember] = useState<Record<string, string>>({});
+  const [newC, setNewC] = useState({
+    course_code: "",
+    test_year: String(new Date().getFullYear()),
+    purpose: "summative" as "formative" | "summative",
+  });
   const [saving, setSaving] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<"review" | "scores">("review");
@@ -83,15 +99,16 @@ export default function SubAdminPage() {
     setErr(null);
     const { data: c } = await supabase
       .from("committees")
-      .select("id, name, subject, test_year")
-      .order("name");
-    setCommittees(c || []);
-    const { data: p } = await supabase
-      .from("profiles")
-      .select("id, email")
-      .order("email", { ascending: true })
-      .limit(200);
-    setProfiles(p || []);
+      .select("id, name, subject, test_year, course_code, purpose")
+      .order("course_code")
+      .order("test_year", { ascending: false });
+    setCommittees((c as CommitteeRow[]) || []);
+    const { data: cat } = await supabase
+      .from("course_catalog")
+      .select("course_code, course_title")
+      .order("course_code")
+      .limit(800);
+    setCatalogCourses(cat || []);
     const { data: ownMemberships } = await supabase
       .from("committee_members")
       .select("committee_id")
@@ -101,13 +118,30 @@ export default function SubAdminPage() {
 
     const { data: sba } = await supabase
       .from("sba_tests")
-      .select("id, subject, subject_code, test_year, committee_id, review_status, created_by");
+      .select(
+        "id, subject, subject_code, test_year, committee_id, review_status, created_by, test_function, assessment_purpose, public_code",
+      );
     const { data: meq } = await supabase
       .from("meq_tests")
-      .select("id, subject, course_code, test_year, committee_id, review_status, created_by");
+      .select(
+        "id, subject, course_code, test_year, committee_id, review_status, created_by, test_function, assessment_purpose, public_code",
+      );
     const mergedAll: TestRow[] = [
-      ...(sba || []).map((r) => ({ ...r, kind: "SBA" as const })),
-      ...(meq || []).map((r) => ({ ...r, subject_code: r.course_code, kind: "MEQ" as const })),
+      ...(sba || []).map((r) => ({
+        ...r,
+        kind: "SBA" as const,
+        test_function: r.test_function as "practice" | "real_test",
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
+        public_code: r.public_code ?? null,
+      })),
+      ...(meq || []).map((r) => ({
+        ...r,
+        subject_code: r.course_code,
+        kind: "MEQ" as const,
+        test_function: r.test_function as "practice" | "real_test",
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
+        public_code: r.public_code ?? null,
+      })),
     ];
     const { data: scopedRows } = await supabase
       .from("sub_admin_course_scopes")
@@ -144,37 +178,61 @@ export default function SubAdminPage() {
 
   const createCommittee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newC.name.trim()) return;
+    if (!myUserId) return;
+    if (!newC.course_code.trim()) {
+      setErr("Choose a course code from the catalog.");
+      return;
+    }
+    const year = parseInt(newC.test_year, 10);
+    if (!Number.isFinite(year)) {
+      setErr("Enter a valid academic year.");
+      return;
+    }
     setSaving("committee");
-    const year = newC.test_year ? parseInt(newC.test_year, 10) : null;
-    const { error } = await supabase
-      .from("committees")
-      .insert({
-        name: newC.name.trim(),
-        subject: newC.subject || null,
-        test_year: year,
-      })
-      .select("id")
-      .single();
+    const labelPurpose = newC.purpose === "summative" ? "Summative" : "Formative";
+    const { error } = await supabase.from("committees").insert({
+      name: `${newC.course_code.trim()} · ${year} · ${labelPurpose}`,
+      subject: null,
+      course_code: newC.course_code.trim().toUpperCase(),
+      test_year: year,
+      purpose: newC.purpose,
+      created_by: myUserId,
+    });
     if (error) {
       setErr(error.message);
     } else {
-      setNewC({ name: "", subject: "", test_year: "" });
+      setNewC({
+        course_code: "",
+        test_year: String(new Date().getFullYear()),
+        purpose: "summative",
+      });
       load();
     }
     setSaving(null);
   };
 
-  const addToCommittee = async (committeeId: string) => {
-    const pid = addMember[committeeId];
-    if (!pid) return;
-    setSaving(`mem-${committeeId}`);
-    const { error } = await supabase
-      .from("committee_members")
-      .insert({ committee_id: committeeId, profile_id: pid });
-    if (error) setErr(error.message);
-    setSaving(null);
-    setAddMember((a) => ({ ...a, [committeeId]: "" }));
+  const committeesMatchingRow = (t: TestRow) =>
+    committees.filter(
+      (c) =>
+        c.course_code &&
+        committeeScopesMatchTest({
+          committeeCourseCode: c.course_code,
+          committeeYear: c.test_year,
+          committeePurpose: c.purpose,
+          testCourseCode: t.subject_code,
+          testYear: t.test_year,
+          testFunction: t.test_function,
+          assessmentPurpose: t.assessment_purpose,
+        }),
+    );
+
+  const committeeOptionsForTest = (t: TestRow) => {
+    const matching = committeesMatchingRow(t);
+    const assigned = t.committee_id ? committees.find((c) => c.id === t.committee_id) : undefined;
+    if (assigned && !matching.some((c) => c.id === assigned.id)) {
+      return [...matching, assigned];
+    }
+    return matching;
   };
 
   const updateTest = async (row: TestRow) => {
@@ -331,8 +389,9 @@ export default function SubAdminPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Exam review committee</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Committee members review assigned tests and provide committee standard scores (10-100).
-            Sub-admins manage assignment and awaited review status.
+            Committee members review assigned tests, enter Modified Angoff per-item probabilities (two
+            rounds), and may record holistic committee standard scores (10–100). Sub-admins manage
+            assignment and review status.
           </p>
         </div>
         <div className="flex gap-2">
@@ -370,34 +429,38 @@ export default function SubAdminPage() {
         {(myRole === "sub_admin" || myRole === "admin") && (
           <>
         <section className="bg-white border rounded-lg p-6">
-          <h2 className="font-semibold text-lg mb-3">New committee</h2>
-          <form onSubmit={createCommittee} className="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div className="flex-1">
-              <label className="text-xs text-gray-600">Name</label>
-              <input
-                className="w-full border rounded px-2 py-1.5"
-                value={newC.name}
-                onChange={(e) => setNewC((n) => ({ ...n, name: e.target.value }))}
-                placeholder="e.g. IM 2026 Review"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-600">Subject (blank = all)</label>
+          <h2 className="font-semibold text-lg mb-3">New committee group</h2>
+          <p className="text-sm text-gray-600 mb-3">
+            Scope is <strong>catalog course code</strong>, <strong>academic year</strong>, and{" "}
+            <strong>formative vs summative</strong>. Formative committees review{" "}
+            <strong>practice</strong> exams and <strong>real</strong> exams the faculty marks as
+            formative; summative committees review <strong>real</strong> exams marked summative. After
+            creating, open the group to <strong>assign members</strong> (search by name or email).
+          </p>
+          <form
+            onSubmit={createCommittee}
+            className="flex flex-col lg:flex-row flex-wrap gap-3 lg:items-end"
+          >
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-xs text-gray-600">Course code (from catalog)</label>
               <select
                 className="w-full border rounded px-2 py-1.5"
-                value={newC.subject}
-                onChange={(e) => setNewC((n) => ({ ...n, subject: e.target.value }))}
+                value={newC.course_code}
+                onChange={(e) => setNewC((n) => ({ ...n, course_code: e.target.value }))}
               >
-                <option value="">All subjects</option>
-                {SUBJECTS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                <option value="">Select code…</option>
+                {catalogCourses
+                  .filter((row) => row.course_code !== "LEGACY-COMMITTEE")
+                  .map((row) => (
+                  <option key={row.course_code} value={row.course_code}>
+                    {row.course_code}
+                    {row.course_title ? ` — ${row.course_title}` : ""}
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-600">Year (blank = any)</label>
+              <label className="text-xs text-gray-600">Year</label>
               <input
                 className="w-28 border rounded px-2 py-1.5"
                 value={newC.test_year}
@@ -405,55 +468,52 @@ export default function SubAdminPage() {
                 placeholder="2026"
               />
             </div>
+            <div>
+              <label className="text-xs text-gray-600">Track</label>
+              <select
+                className="w-full min-w-[140px] border rounded px-2 py-1.5"
+                value={newC.purpose}
+                onChange={(e) =>
+                  setNewC((n) => ({
+                    ...n,
+                    purpose: e.target.value as "formative" | "summative",
+                  }))
+                }
+              >
+                <option value="summative">Summative (real high-stakes)</option>
+                <option value="formative">Formative (practice + real formative)</option>
+              </select>
+            </div>
             <button
               type="submit"
               disabled={saving === "committee"}
               className="px-4 py-2 bg-slate-800 text-white rounded font-medium disabled:opacity-50"
             >
-              Create
+              Create group
             </button>
           </form>
         </section>
 
         <section className="bg-white border rounded-lg p-6">
-          <h2 className="font-semibold text-lg mb-3">Committees &amp; members</h2>
-          <ul className="space-y-4">
+          <h2 className="font-semibold text-lg mb-3">Committee groups</h2>
+          <ul className="space-y-3">
             {committees.length === 0 ? (
               <li className="text-gray-500 text-sm">No committees yet.</li>
             ) : (
               committees.map((c) => (
-                <li key={c.id} className="border rounded p-3 text-sm">
-                  <div className="font-medium">
-                    {c.name}{" "}
-                    <span className="text-gray-500 font-normal">
-                      ({c.subject || "all subjects"}{" "}
-                      {c.test_year != null ? `· ${c.test_year}` : ""})
-                    </span>
+                <li key={c.id} className="border rounded p-3 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{c.name}</div>
+                    <div className="text-gray-500 text-xs mt-0.5">
+                      {c.course_code} · {c.test_year} · {c.purpose === "summative" ? "Summative" : "Formative"}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <select
-                      className="border rounded px-2 py-1 min-w-[200px]"
-                      value={addMember[c.id] || ""}
-                      onChange={(e) =>
-                        setAddMember((a) => ({ ...a, [c.id]: e.target.value }))
-                      }
-                    >
-                      <option value="">Add member by user…</option>
-                      {profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.email}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => addToCommittee(c.id)}
-                      className="text-sm text-blue-600 font-medium"
-                      disabled={saving === `mem-${c.id}`}
-                    >
-                      Add
-                    </button>
-                  </div>
+                  <Link
+                    href={`/sub-admin/committees/${c.id}`}
+                    className="text-blue-600 font-medium text-sm hover:underline whitespace-nowrap"
+                  >
+                    Open · assign members
+                  </Link>
                 </li>
               ))
             )}
@@ -472,16 +532,18 @@ export default function SubAdminPage() {
               className="w-full border rounded px-2 py-1.5"
               value={testCodeSearch}
               onChange={(e) => setTestCodeSearch(e.target.value)}
-              placeholder="e.g. IM101"
+              placeholder="e.g. CHMD 7404"
             />
           </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-gray-600">
                 <th className="py-2 pr-2">Type</th>
-                <th className="py-2 pr-2">Subject / Code / Year</th>
+                <th className="py-2 pr-2">Test ID</th>
+                <th className="py-2 pr-2">Subject / Code / Year / Track</th>
                 <th className="py-2 pr-2">Committee</th>
                 <th className="py-2 pr-2">Status</th>
+                <th className="py-2 pr-2">Modified Angoff</th>
                 <th className="py-2 pr-2">Committee score</th>
                 <th className="py-2">Save</th>
               </tr>
@@ -489,7 +551,7 @@ export default function SubAdminPage() {
             <tbody>
               {roleScopedTests.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-6 text-gray-500">
+                  <td colSpan={8} className="py-6 text-gray-500">
                     No assigned tests match this filter yet.
                   </td>
                 </tr>
@@ -497,13 +559,20 @@ export default function SubAdminPage() {
                 roleScopedTests.map((t) => (
                   <tr key={`${t.kind}-${t.id}`} className="border-t">
                     <td className="py-2 pr-2 font-mono text-xs">{t.kind}</td>
+                    <td className="py-2 pr-2 font-mono text-xs text-slate-700">
+                      {t.public_code ? t.public_code : "—"}
+                    </td>
                     <td className="py-2 pr-2">
                       {t.subject} <span className="text-gray-500">·</span> {t.subject_code}{" "}
-                      <span className="text-gray-500">·</span> {t.test_year}
+                      <span className="text-gray-500">·</span> {t.test_year}{" "}
+                      <span className="text-gray-500">·</span>{" "}
+                      {t.test_function === "practice"
+                        ? "Practice · formative"
+                        : `Real test · ${t.assessment_purpose}`}
                     </td>
                     <td className="py-2 pr-2">
                       <select
-                        className="border rounded px-1 py-0.5 max-w-[200px] text-xs"
+                        className="border rounded px-1 py-0.5 max-w-[220px] text-xs"
                         value={t.committee_id || ""}
                         disabled={!canEditAwaitingTests || t.review_status !== "pending_committee"}
                         onChange={(e) => {
@@ -518,7 +587,7 @@ export default function SubAdminPage() {
                         }}
                       >
                         <option value="">— not assigned —</option>
-                        {committees.map((c) => (
+                        {committeeOptionsForTest(t).map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}
                           </option>
@@ -544,6 +613,14 @@ export default function SubAdminPage() {
                         <option value="approved">approved (pass)</option>
                         <option value="rejected">rejected</option>
                       </select>
+                    </td>
+                    <td className="py-2 pr-2">
+                      <Link
+                        href={`/sub-admin/angoff/${t.kind === "MEQ" ? "meq" : "sba"}/${t.id}`}
+                        className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
+                      >
+                        Open Angoff
+                      </Link>
                     </td>
                     <td className="py-2 pr-2">
                       {t.committee_id ? (

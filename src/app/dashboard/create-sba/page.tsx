@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase";
 import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
 import { getAuthUserId } from "@/lib/auth/session";
 import { useRoleGate } from "@/hooks/useRoleGate";
+import { downloadCsv, rowToCsvLine } from "@/lib/csvDownload";
+import { parseSbaQuestionsCsv } from "@/lib/parseSbaQuestionsCsv";
 import { SUBJECTS, type SubjectName } from "@/lib/subjects";
 
 type OptionRow = { id: string; text: string };
@@ -44,6 +46,7 @@ export default function CreateSbaTestPage() {
     { code: string; hint: string }[]
   >([]);
   const [testFunction, setTestFunction] = useState<"practice" | "real_test">("real_test");
+  const [assessmentPurpose, setAssessmentPurpose] = useState<"formative" | "summative">("summative");
   const [testYear, setTestYear] = useState(new Date().getFullYear());
   const [departmentId, setDepartmentId] = useState<string>("");
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
@@ -102,6 +105,22 @@ export default function CreateSbaTestPage() {
     };
     void run();
   }, [subjectCodeSearch]);
+
+  const applyImportedQuestions = (csvText: string) => {
+    const result = parseSbaQuestionsCsv(csvText);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    const mapped = result.rows.map((r) => ({
+      stem: r.stem,
+      image_url: r.image_url,
+      options: r.options,
+      correct_option_id: r.correct_option_id,
+    }));
+    setQuestions((prev) => [...prev, ...mapped]);
+  };
 
   const updateQuestion = (i: number, next: Partial<QuestionDraft>) => {
     setQuestions((prev) =>
@@ -173,12 +192,13 @@ export default function CreateSbaTestPage() {
         subject,
         subject_code: normalizedCourseCode,
         test_function: testFunction,
+        assessment_purpose: testFunction === "practice" ? "formative" : assessmentPurpose,
         department_id: departmentId || null,
         test_year: testYear,
         created_by: userIdSubmit,
         review_status: "pending_committee",
       })
-      .select("id")
+      .select("id, public_code")
       .single();
 
     if (testErr || !testRow) {
@@ -191,6 +211,7 @@ export default function CreateSbaTestPage() {
     }
 
     const testId = testRow.id;
+    const publicCode = (testRow as { id: string; public_code: string | null }).public_code ?? null;
     const rows = questions.map((q, order) => ({
       sba_test_id: testId,
       sequence_order: order + 1,
@@ -210,7 +231,8 @@ export default function CreateSbaTestPage() {
     }
 
     setSaving(false);
-    router.push("/dashboard/my-tests");
+    const q = publicCode ? `?created=${encodeURIComponent(publicCode)}` : "";
+    router.push(`/dashboard/my-tests${q}`);
   };
 
   if (!accessOk || gateLoading || !depsReady) {
@@ -307,6 +329,27 @@ export default function CreateSbaTestPage() {
                 <option value="real_test">Real test</option>
               </select>
             </div>
+            {testFunction === "real_test" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Real test classification
+                </label>
+                <select
+                  className="mt-1 w-full border rounded-md px-3 py-2"
+                  value={assessmentPurpose}
+                  onChange={(e) =>
+                    setAssessmentPurpose(e.target.value as "formative" | "summative")
+                  }
+                >
+                  <option value="summative">Summative (high-stakes)</option>
+                  <option value="formative">Formative (scheduled real exam)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Matches committee groups: formative vs summative. Practice exams are always
+                  formative.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Year</label>
@@ -332,6 +375,60 @@ export default function CreateSbaTestPage() {
                 </select>
               </div>
             </div>
+          </section>
+
+          <section className="border border-gray-200 rounded-lg p-4 space-y-2 bg-gray-50/80">
+            <h2 className="font-semibold text-gray-900">Bulk import (CSV)</h2>
+            <p className="text-xs text-gray-600">
+              Download the template, then fill one row per question. Each import <strong>adds</strong>{" "}
+              those rows after your current draft questions (nothing is removed).
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center flex-wrap">
+              <button
+                type="button"
+                className="text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 shadow-sm w-fit"
+                onClick={() =>
+                  downloadCsv("sba-questions-template.csv", [
+                    rowToCsvLine(["stem", "image_url", "correct_option_id", "A", "B", "C", "D"]),
+                    rowToCsvLine([
+                      "Example: What is the most appropriate next step?",
+                      "",
+                      "B",
+                      "First answer choice",
+                      "Second answer choice",
+                      "Third choice (optional)",
+                      "",
+                    ]),
+                  ])
+                }
+              >
+                Download CSV template
+              </button>
+              <label className="text-sm text-gray-700 flex items-center gap-2 cursor-pointer">
+                <span className="font-medium">Import CSV</span>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="text-sm text-gray-800 max-w-[220px]"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const t = typeof reader.result === "string" ? reader.result : "";
+                      applyImportedQuestions(t);
+                    };
+                    reader.readAsText(f);
+                  }}
+                />
+              </label>
+            </div>
+            <p className="text-xs text-gray-500">
+              Required header columns: stem (or question_text), correct_option_id (or correct), and at
+              least two choice columns named A, B, … Add image_url for optional picture URLs. Extra
+              columns E–P are supported if you add them to the header row.
+            </p>
           </section>
 
           {questions.map((q, qIdx) => (

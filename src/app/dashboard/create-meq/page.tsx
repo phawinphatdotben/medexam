@@ -8,6 +8,7 @@ import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
 import { getAuthUserId } from "@/lib/auth/session";
 import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS, type SubjectName } from "@/lib/subjects";
+import { downloadCsv, rowToCsvLine } from "@/lib/csvDownload";
 import { parseMeqStagesCsv } from "@/lib/parseMeqStagesCsv";
 
 type StageDraft = {
@@ -36,6 +37,7 @@ export default function CreateMeqTestPage() {
     { code: string; hint: string }[]
   >([]);
   const [testFunction, setTestFunction] = useState<"practice" | "real_test">("real_test");
+  const [assessmentPurpose, setAssessmentPurpose] = useState<"formative" | "summative">("summative");
   const [testYear, setTestYear] = useState(new Date().getFullYear());
   const [departmentId, setDepartmentId] = useState<string>("");
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
@@ -215,6 +217,7 @@ export default function CreateMeqTestPage() {
         subject,
         course_code: normalizedCourseCode,
         test_function: testFunction,
+        assessment_purpose: testFunction === "practice" ? "formative" : assessmentPurpose,
         department_id: departmentId || null,
         test_year: testYear,
         time_limit_minutes: overall,
@@ -223,7 +226,7 @@ export default function CreateMeqTestPage() {
         created_by: userIdSubmit,
         review_status: "pending_committee",
       })
-      .select("id")
+      .select("id, public_code")
       .single();
 
     if (testErr || !testRow) {
@@ -236,6 +239,7 @@ export default function CreateMeqTestPage() {
     }
 
     const testId = testRow.id;
+    const publicCode = (testRow as { id: string; public_code: string | null }).public_code ?? null;
     const stageRows = stages.map((s, i) => ({
       meq_test_id: testId,
       sequence_order: i + 1,
@@ -255,7 +259,8 @@ export default function CreateMeqTestPage() {
     }
 
     setSaving(false);
-    router.push("/dashboard/my-tests");
+    const q = publicCode ? `?created=${encodeURIComponent(publicCode)}` : "";
+    router.push(`/dashboard/my-tests${q}`);
   };
 
   if (!accessOk || gateLoading || !depsReady) {
@@ -286,8 +291,9 @@ export default function CreateMeqTestPage() {
           </p>
           <p>
             <span className="font-semibold">Real vs practice:</span> Approved <em>practice</em> tests appear in
-            practice browse for all students. Approved <em>real</em> tests only appear in a student&apos;s{" "}
-            <strong>Test session</strong> after an admin or sub-admin assigns them to people or groups.
+            practice browse for all students. Approved <em>real</em> tests (formative or summative)
+            only appear in a student&apos;s <strong>Test session</strong> after an admin or sub-admin
+            assigns them to people or groups.
           </p>
         </div>
 
@@ -360,6 +366,27 @@ export default function CreateMeqTestPage() {
                 <option value="real_test">Real test</option>
               </select>
             </div>
+            {testFunction === "real_test" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Real test classification
+                </label>
+                <select
+                  className="mt-1 w-full border rounded-md px-3 py-2"
+                  value={assessmentPurpose}
+                  onChange={(e) =>
+                    setAssessmentPurpose(e.target.value as "formative" | "summative")
+                  }
+                >
+                  <option value="summative">Summative (high-stakes)</option>
+                  <option value="formative">Formative (scheduled real exam)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Matches committee groups: formative vs summative. Practice exams are always
+                  formative.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Year</label>
@@ -425,10 +452,38 @@ export default function CreateMeqTestPage() {
           <section className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <h2 className="font-semibold text-lg">Stages (typed student answers)</h2>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2 items-start">
                 <label className="text-sm font-medium text-gray-700">
                   Import stages from CSV
                 </label>
+                <button
+                  type="button"
+                  className="text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-800 shadow-sm"
+                  onClick={() =>
+                    downloadCsv("meq-stages-template.csv", [
+                      rowToCsvLine([
+                        "sequence_order",
+                        "time_limit_minutes",
+                        "stage_information",
+                        "question_text",
+                        "rubric_criteria",
+                        "max_score",
+                        "media_url",
+                      ]),
+                      rowToCsvLine([
+                        "1",
+                        "15",
+                        "Optional: labs or extra context for this stage.",
+                        "What is the most likely diagnosis?",
+                        "Award points for systematic reasoning and final diagnosis.",
+                        "10",
+                        "",
+                      ]),
+                    ])
+                  }
+                >
+                  Download CSV template
+                </button>
                 <input
                   type="file"
                   accept=".csv,text/csv"

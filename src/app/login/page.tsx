@@ -12,6 +12,7 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [signupRole, setSignupRole] = useState<"student" | "staff">("student");
+  const [doctorId, setDoctorId] = useState("");
   const [studentYear, setStudentYear] = useState("1");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +64,11 @@ export default function AuthPage() {
           setLoading(false);
           return;
         }
+        if (signupRole === "staff" && !doctorId.trim()) {
+          setError("Physician / doctor ID is required for staff registration.");
+          setLoading(false);
+          return;
+        }
         // signup mode
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -74,6 +80,7 @@ export default function AuthPage() {
               requested_role: signupRole === "staff" ? "educator" : "student",
               profile_year: signupRole === "student" ? studentYear : null,
               medical_student_year: signupRole === "student" ? Number(studentYear) : null,
+              doctor_id: signupRole === "staff" ? doctorId.trim() : null,
             },
           },
         });
@@ -215,6 +222,28 @@ export default function AuthPage() {
                 <option value="student">Student</option>
                 <option value="staff">Staff</option>
               </select>
+            </div>
+          )}
+          {mode === "signup" && signupRole === "staff" && (
+            <div>
+              <label className="block text-gray-700 font-medium mb-1" htmlFor="doctor-id">
+                Physician ID (Medical Council / doctor registration number)
+              </label>
+              <input
+                id="doctor-id"
+                name="doctor-id"
+                className="block w-full border border-gray-300 rounded px-4 py-3 text-lg focus:ring-2 focus:ring-blue-300 shadow-sm outline-none"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                value={doctorId}
+                onChange={(e) => setDoctorId(e.target.value)}
+                required={signupRole === "staff"}
+                disabled={loading}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Required for educators and administrators. Each ID may only be registered once.
+              </p>
             </div>
           )}
           {mode === "signup" && signupRole === "student" && (
