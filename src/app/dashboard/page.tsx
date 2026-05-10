@@ -21,6 +21,15 @@ interface StudentResultRow {
   ai_rationale_feedback: string | null;
 }
 
+type GradingQueueRow = {
+  meq_test_id: string;
+  test_display_id: string;
+  test_label: string;
+  waiting: number;
+  completed: number;
+  total_sent: number;
+};
+
 export default function EducatorDashboard() {
   const { ready: accessOk, loading: gateLoading, userId: currentUserId, role: userRole } = useRoleGate(
     STAFF_DASHBOARD_ROLES,
@@ -35,6 +44,10 @@ export default function EducatorDashboard() {
   const [studentResults, setStudentResults] = useState<StudentResultRow[]>([]);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsError, setResultsError] = useState<string | null>(null);
+
+  const [gradingQueue, setGradingQueue] = useState<GradingQueueRow[]>([]);
+  const [gradingQueueLoading, setGradingQueueLoading] = useState(false);
+  const [gradingQueueError, setGradingQueueError] = useState<string | null>(null);
 
   useEffect(() => {
     if (authChecking) return;
@@ -151,6 +164,117 @@ export default function EducatorDashboard() {
       setResultsLoading(false);
     };
     void fetchStudentResults();
+  }, [authChecking, userRole, currentUserId]);
+
+  useEffect(() => {
+    if (authChecking || !currentUserId) return;
+    if (userRole === "sub_admin") {
+      setGradingQueue([]);
+      return;
+    }
+    const fetchGradingQueue = async () => {
+      setGradingQueueLoading(true);
+      setGradingQueueError(null);
+      const { data, error: qErr } = await supabase
+        .from("meq_stage_responses")
+        .select(
+          `
+            user_id,
+            human_override_score,
+            meq_stage_items!inner(
+              meq_test_stages!inner(
+                meq_test_id,
+                meq_tests!inner(id, created_by, public_code, subject, course_code)
+              )
+            )
+          `,
+        )
+        .eq("status", "locked");
+      if (qErr) {
+        setGradingQueueError("Could not load grading queue.");
+        setGradingQueue([]);
+        setGradingQueueLoading(false);
+        return;
+      }
+      type R = {
+        user_id: string;
+        human_override_score: number | null;
+        meq_stage_items: {
+          meq_test_stages: {
+            meq_test_id: string;
+            meq_tests: {
+              id: string;
+              created_by: string;
+              public_code: string | null;
+              subject: string;
+              course_code: string;
+            };
+          };
+        };
+      };
+      const raw = (data as unknown as R[] | null) || [];
+      const visible =
+        userRole === "educator"
+          ? raw.filter((r) => r.meq_stage_items.meq_test_stages.meq_tests.created_by === currentUserId)
+          : raw;
+
+      /** testId -> studentId -> { anyRow, needsGrade } needsGrade iff any locked row lacks score */
+      const byTest = new Map<string, Map<string, { needsGrade: boolean }>>();
+      const metaByTest = new Map<string, { label: string; displayId: string }>();
+
+      for (const row of visible) {
+        const t = row.meq_stage_items.meq_test_stages;
+        const testId = t.meq_test_id;
+        const mt = t.meq_tests;
+        if (!metaByTest.has(testId)) {
+          const display =
+            mt.public_code?.trim() ||
+            `${mt.course_code ?? ""} MEQ-${mt.id.slice(0, 8)}`;
+          metaByTest.set(testId, {
+            displayId: display,
+            label: `${mt.subject} (${mt.course_code})`,
+          });
+        }
+        const uid = row.user_id;
+        const needs = row.human_override_score == null;
+        if (!byTest.has(testId)) byTest.set(testId, new Map());
+        const sm = byTest.get(testId)!;
+        const cur = sm.get(uid);
+        if (!cur) {
+          sm.set(uid, { needsGrade: needs });
+        } else if (needs) {
+          cur.needsGrade = true;
+        }
+      }
+
+      const out: GradingQueueRow[] = [];
+      for (const [meq_test_id, sm] of byTest) {
+        const meta = metaByTest.get(meq_test_id);
+        if (!meta) continue;
+        let waiting = 0;
+        let completed = 0;
+        for (const st of sm.values()) {
+          if (st.needsGrade) waiting++;
+          else completed++;
+        }
+        const total_sent = waiting + completed;
+        out.push({
+          meq_test_id,
+          test_display_id: meta.displayId,
+          test_label: meta.label,
+          waiting,
+          completed,
+          total_sent,
+        });
+      }
+      out.sort((a, b) => {
+        if (b.waiting !== a.waiting) return b.waiting - a.waiting;
+        return a.test_label.localeCompare(b.test_label);
+      });
+      setGradingQueue(out);
+      setGradingQueueLoading(false);
+    };
+    void fetchGradingQueue();
   }, [authChecking, userRole, currentUserId]);
 
   function formatDate(dateString: string) {
@@ -287,6 +411,79 @@ export default function EducatorDashboard() {
                           My tests
                         </Link>
                       </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* MEQ grading queue */}
+        <div className="bg-white border border-gray-200 shadow rounded-lg mb-10">
+          <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-xl font-semibold text-blue-900">Tests waiting to be graded</h2>
+              <p className="text-xs text-gray-600 mt-1 max-w-xl">
+                Per MEQ exam: distinct students who have <strong>locked</strong> submissions.{" "}
+                <strong>Students waiting</strong> still have at least one unsubmitted score; <strong>Completed</strong>{" "}
+                have every submitted item scored. Totals exclude students who have not begun the exam.
+              </p>
+            </div>
+            <Link
+              href="/dashboard/grade"
+              className="text-sm font-semibold text-blue-800 hover:underline shrink-0"
+            >
+              Open grading →
+            </Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-6 py-3 text-gray-700 font-medium border-b border-gray-200">Test ID</th>
+                  <th className="px-6 py-3 text-gray-700 font-medium border-b border-gray-200">
+                    Students waiting to be graded
+                  </th>
+                  <th className="px-6 py-3 text-gray-700 font-medium border-b border-gray-200">Completed</th>
+                  <th className="px-6 py-3 text-gray-700 font-medium border-b border-gray-200">
+                    Total students (submitted)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {gradingQueueLoading ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-5 text-center text-blue-600">
+                      Loading...
+                    </td>
+                  </tr>
+                ) : gradingQueueError ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-5 text-center text-red-600">
+                      {gradingQueueError}
+                    </td>
+                  </tr>
+                ) : gradingQueue.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-5 text-center text-gray-500">
+                      No locked MEQ submissions to grade in your scope.
+                    </td>
+                  </tr>
+                ) : (
+                  gradingQueue.map((q) => (
+                    <tr key={q.meq_test_id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 border-b border-gray-100 align-top">
+                        <div className="font-mono text-xs">{q.test_display_id}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">{q.test_label}</div>
+                      </td>
+                      <td className="px-6 py-4 border-b border-gray-100 tabular-nums font-semibold text-amber-900">
+                        {q.waiting}
+                      </td>
+                      <td className="px-6 py-4 border-b border-gray-100 tabular-nums text-green-800">
+                        {q.completed}
+                      </td>
+                      <td className="px-6 py-4 border-b border-gray-100 tabular-nums">{q.total_sent}</td>
                     </tr>
                   ))
                 )}

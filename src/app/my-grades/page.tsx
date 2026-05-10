@@ -1,22 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth/AuthProvider";
 
-interface GradedResponse {
+type GradedItem = {
   id: string;
   created_at: string;
-  human_override_score: number | null;
+  human_override_score: number;
   ai_rationale_feedback: string | null;
+  stage_order: number;
+  item_order: number;
+};
+
+type TestGradeGroup = {
+  meq_test_id: string;
+  test_display_id: string;
   test_label: string;
+  items: GradedItem[];
+};
+
+function caret(expanded: boolean) {
+  return expanded ? (
+    <span aria-hidden className="inline-block w-6 text-blue-900 font-semibold tabular-nums">
+      ▼
+    </span>
+  ) : (
+    <span aria-hidden className="inline-block w-6 text-blue-900 font-semibold tabular-nums">
+      ▸
+    </span>
+  );
 }
 
 export default function MyGrades() {
   const { user, loading: authLoading } = useAuth();
-  const [gradedResponses, setGradedResponses] = useState<GradedResponse[]>([]);
+  const [groups, setGroups] = useState<TestGradeGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [userError, setUserError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -45,7 +66,7 @@ export default function MyGrades() {
             meq_test_stages!inner(
               sequence_order,
               meq_test_id,
-              meq_tests!inner( subject, course_code )
+              meq_tests!inner( id, subject, course_code, public_code )
             )
           )
         `
@@ -69,35 +90,72 @@ export default function MyGrades() {
           meq_test_stages?: {
             sequence_order: number;
             meq_test_id: string;
-            meq_tests: { subject: string; course_code: string };
+            meq_tests: {
+              id: string;
+              subject: string;
+              course_code: string;
+              public_code: string | null;
+            };
           };
         } | null;
       };
 
-      const flattened: GradedResponse[] = ((data as unknown as Row[] | null) || []).map((res) => {
+      type Bucket = TestGradeGroup;
+      const bucketByTest = new Map<string, Bucket>();
+
+      for (const res of (data as unknown as Row[] | null) || []) {
         const nested = Array.isArray(res.meq_stage_items)
           ? res.meq_stage_items[0]
           : res.meq_stage_items;
         const st = nested?.meq_test_stages;
-        const t = st?.meq_tests ?? { subject: "MEQ", course_code: "" };
-        const stageLabel = typeof st?.sequence_order === "number" ? ` · stage ${st.sequence_order}` : "";
-        const partLabel =
-          typeof nested?.sequence_order === "number" ? ` · part ${nested.sequence_order}` : "";
-        return {
+        const t = st?.meq_tests;
+        if (
+          typeof st?.meq_test_id !== "string" ||
+          typeof res.human_override_score !== "number" ||
+          typeof nested?.sequence_order !== "number" ||
+          typeof st.sequence_order !== "number" ||
+          !t
+        ) {
+          continue;
+        }
+
+        const meq_test_id = st.meq_test_id;
+        if (!bucketByTest.has(meq_test_id)) {
+          const test_display_id =
+            t.public_code?.trim() || `MEQ-${t.id.slice(0, 8)}…`;
+          bucketByTest.set(meq_test_id, {
+            meq_test_id,
+            test_display_id,
+            test_label: `${t.subject} (${t.course_code})`,
+            items: [],
+          });
+        }
+        bucketByTest.get(meq_test_id)!.items.push({
           id: res.id,
           created_at: res.created_at,
           human_override_score: res.human_override_score,
           ai_rationale_feedback: res.ai_rationale_feedback,
-          test_label: `${t.subject} (${t.course_code})${stageLabel}${partLabel}`,
-        };
+          stage_order: st.sequence_order,
+          item_order: nested.sequence_order,
+        });
+      }
+
+      const list: TestGradeGroup[] = [...bucketByTest.values()].map((g) => ({
+        ...g,
+        items: [...g.items].sort((a, b) => {
+          if (b.stage_order !== a.stage_order) return b.stage_order - a.stage_order;
+          return a.item_order - b.item_order || b.created_at.localeCompare(a.created_at);
+        }),
+      }));
+
+      list.sort((a, b) => {
+        const ad = Math.max(...a.items.map((x) => new Date(x.created_at).getTime()), 0);
+        const bd = Math.max(...b.items.map((x) => new Date(x.created_at).getTime()), 0);
+        return bd - ad;
       });
 
-      flattened.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-
       if (mounted) {
-        setGradedResponses(flattened);
+        setGroups(list);
         setLoading(false);
       }
     };
@@ -109,11 +167,20 @@ export default function MyGrades() {
     };
   }, [authLoading, user?.id]);
 
+  const anyExpanded = useMemo(() => groups.some((g) => expanded[g.meq_test_id]), [groups, expanded]);
+
+  function toggleExpand(meqTestId: string) {
+    setExpanded((prev) => ({ ...prev, [meqTestId]: !prev[meqTestId] }));
+  }
+
   return (
     <div className="flex flex-col items-center min-h-screen bg-white pt-20 pb-10 px-4">
-      <h1 className="text-3xl font-bold text-blue-800 mb-8 text-center tracking-tight">
+      <h1 className="text-3xl font-bold text-blue-800 mb-2 text-center tracking-tight">
         My examination results
       </h1>
+      <p className="text-sm text-gray-600 mb-8 text-center max-w-lg">
+        Each row is one exam (<strong>Test ID</strong>). Use the arrow to open every graded stage and its feedback.
+      </p>
 
       {loading ? (
         <div className="flex flex-col items-center mt-16">
@@ -129,59 +196,125 @@ export default function MyGrades() {
           <span className="text-blue-800 text-lg font-medium">Loading your grades...</span>
         </div>
       ) : userError ? (
-        <div className="bg-red-100 text-red-700 px-6 py-4 rounded shadow mt-8 font-semibold">
-          {userError}
-        </div>
-      ) : gradedResponses.length === 0 ? (
+        <div className="bg-red-100 text-red-700 px-6 py-4 rounded shadow mt-8 font-semibold">{userError}</div>
+      ) : groups.length === 0 ? (
         <div className="mt-16 bg-yellow-50 border border-yellow-200 text-yellow-800 px-8 py-6 rounded-lg shadow text-lg text-center font-semibold">
           You have not received any MEQ stage grades yet. Keep up the hard work!
         </div>
       ) : (
-        <div className="w-full max-w-3xl">
-          <table className="w-full bg-white shadow-lg rounded-lg overflow-hidden">
+        <div className="w-full max-w-4xl overflow-x-auto">
+          <table className="w-full bg-white shadow-lg rounded-lg overflow-hidden min-w-[42rem]">
             <thead>
               <tr className="bg-blue-100 border-b border-blue-200">
-                <th className="py-3 px-4 text-left text-blue-900 font-bold">Test</th>
-                <th className="py-3 px-4 text-left text-blue-900 font-bold">Date</th>
-                <th className="py-3 px-4 text-left text-blue-900 font-bold">Score</th>
-                <th className="py-3 px-4 text-left text-blue-900 font-bold">Feedback</th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold w-10" aria-hidden>
+                  {""}
+                </th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold">Test ID</th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold">Date</th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold">Score</th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold">Feedback</th>
               </tr>
             </thead>
             <tbody>
-              {gradedResponses.map((resp) => (
-                <tr key={resp.id} className="border-b last:border-0 hover:bg-blue-100/20">
-                  <td className="py-3 px-4 font-medium text-gray-900">{resp.test_label}</td>
-                  <td className="py-3 px-4 text-gray-600">
-                    {new Date(resp.created_at).toLocaleDateString(undefined, {
-                      year: "numeric",
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td className="py-3 px-4">
-                    {resp.human_override_score !== null ? (
-                      <span className="inline-block px-3 py-1 rounded-full bg-blue-200 text-blue-950 font-semibold text-base">
-                        {resp.human_override_score}
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    {resp.ai_rationale_feedback ? (
-                      <div className="bg-blue-50 border border-blue-200 rounded px-4 py-3 text-blue-800 text-base max-w-xs break-words shadow-sm">
-                        {resp.ai_rationale_feedback}
+              {groups.flatMap((g) => {
+                const isOpen = !!expanded[g.meq_test_id];
+                const latest = Math.max(...g.items.map((x) => new Date(x.created_at).getTime()), 0);
+                const sumScores = g.items.reduce((acc, x) => acc + x.human_override_score, 0);
+                const roundedSum = Number.isInteger(sumScores) ? String(sumScores) : sumScores.toFixed(1);
+                const parentRow = (
+                  <tr
+                    key={g.meq_test_id}
+                    className="border-b border-gray-200 bg-white hover:bg-blue-50/40 cursor-pointer"
+                    onClick={() => toggleExpand(g.meq_test_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleExpand(g.meq_test_id);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-expanded={isOpen}
+                    aria-label={`${isOpen ? "Collapse" : "Expand"} stages for ${g.test_display_id}`}
+                  >
+                    <td className="py-3 px-2 align-top text-center">{caret(isOpen)}</td>
+                    <td className="py-3 px-3 align-top">
+                      <div className="font-mono text-sm font-semibold text-gray-900">{g.test_display_id}</div>
+                      <div className="text-xs text-gray-600 mt-0.5">{g.test_label}</div>
+                      <div className="text-xs text-blue-800 mt-1 font-medium">
+                        {g.items.length} graded part{g.items.length === 1 ? "" : "s"} — tap row to {isOpen ? "hide" : "show"}
                       </div>
-                    ) : (
-                      <span className="italic text-gray-400">No feedback</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="py-3 px-3 align-top text-gray-600 text-sm">
+                      <span className="text-gray-500 text-xs block">Last graded</span>
+                      {new Date(latest).toLocaleDateString(undefined, {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="py-3 px-3 align-top">
+                      <span className="inline-block px-3 py-1 rounded-full bg-blue-100 text-blue-950 font-semibold text-sm">
+                        {roundedSum} total
+                      </span>
+                      <span className="block text-xs text-gray-500 mt-1">sum of parts</span>
+                    </td>
+                    <td className="py-3 px-3 align-top text-sm text-gray-600 italic">
+                      {isOpen ? "See each stage below" : "Open the row for stage-by-stage feedback"}
+                    </td>
+                  </tr>
+                );
+
+                const childRows =
+                  isOpen ?
+                    g.items.map((item) => (
+                      <tr
+                        key={`${g.meq_test_id}-${item.id}`}
+                        className="border-b border-gray-100 bg-slate-50/90"
+                      >
+                        <td className="py-3 px-2" aria-hidden />
+                        <td className="py-3 px-3 text-sm text-gray-800 font-medium">
+                          Stage {item.stage_order}
+                          {item.item_order > 1 ? (
+                            <span className="text-gray-600"> · Part {item.item_order}</span>
+                          ) : null}
+                        </td>
+                        <td className="py-3 px-3 text-gray-600 text-sm">
+                          {new Date(item.created_at).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="inline-block px-3 py-1 rounded-full bg-blue-200 text-blue-950 font-semibold text-base">
+                            {item.human_override_score}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          {item.ai_rationale_feedback ? (
+                            <div className="bg-blue-50 border border-blue-200 rounded px-4 py-3 text-blue-800 text-sm max-w-md break-words shadow-sm">
+                              {item.ai_rationale_feedback}
+                            </div>
+                          ) : (
+                            <span className="italic text-gray-400 text-sm">No feedback</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  : [];
+
+                return [parentRow, ...childRows];
+              })}
             </tbody>
           </table>
+          {!anyExpanded ? (
+            <p className="text-xs text-gray-500 mt-3 text-center">Tip: click a row to expand all stages for that exam.</p>
+          ) : null}
         </div>
       )}
     </div>

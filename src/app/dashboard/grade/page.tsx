@@ -45,6 +45,13 @@ type QuestionPick = {
   sortKey: string;
 };
 
+type StagePick = {
+  meq_stage_id: string;
+  stage_order: number;
+  label: string;
+  sortKey: string;
+};
+
 export default function GradingDashboard() {
   const { ready: accessOk, loading: gateLoading, userId: graderId, role: graderRole } = useRoleGate(
     GRADING_ROLES,
@@ -61,6 +68,7 @@ export default function GradingDashboard() {
   const [selectedCourse, setSelectedCourse] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState<number | "">("");
   const [selectedQuestionItemId, setSelectedQuestionItemId] = useState<string>("");
+  const [selectedStageId, setSelectedStageId] = useState<string>("");
   const [selectedStudentId, setSelectedStudentId] = useState<string>("");
   const [studentProfiles, setStudentProfiles] = useState<Record<string, { email: string; full_name: string | null }>>(
     {},
@@ -127,6 +135,7 @@ export default function GradingDashboard() {
       setSelectedCourse(departmentOptions[0] || "");
       setSelectedYear("");
       setSelectedQuestionItemId("");
+      setSelectedStageId("");
       setSelectedStudentId("");
     }
   }, [departmentOptions, selectedCourse]);
@@ -149,6 +158,7 @@ export default function GradingDashboard() {
     if (!yearOptions.includes(selectedYear)) {
       setSelectedYear("");
       setSelectedQuestionItemId("");
+      setSelectedStageId("");
       setSelectedStudentId("");
     }
   }, [yearOptions, selectedYear]);
@@ -178,20 +188,59 @@ export default function GradingDashboard() {
     const ids = new Set(questionOptions.map((q) => q.meq_stage_item_id));
     if (selectedQuestionItemId && !ids.has(selectedQuestionItemId)) {
       setSelectedQuestionItemId("");
+      setSelectedStageId("");
       setSelectedStudentId("");
     }
   }, [questionOptions, selectedQuestionItemId]);
 
-  const questionScoped = useMemo(
+  const questionItemScoped = useMemo(
     () =>
       selectedQuestionItemId ? courseYearScoped.filter((r) => r.meq_stage_item_id === selectedQuestionItemId) : [],
     [courseYearScoped, selectedQuestionItemId],
   );
 
+  const stageOptions: StagePick[] = useMemo(() => {
+    const byStage = new Map<string, StagePick>();
+    for (const r of questionItemScoped) {
+      if (!byStage.has(r.meq_stage_id)) {
+        const code = r.test_public_code?.trim() || `MEQ-${r.meq_test_id.slice(0, 8)}`;
+        byStage.set(r.meq_stage_id, {
+          meq_stage_id: r.meq_stage_id,
+          stage_order: r.stage_order,
+          label: `Stage ${r.stage_order} · ${code}`,
+          sortKey: `${code}-${String(r.stage_order).padStart(3, "0")}-${r.meq_stage_id}`,
+        });
+      }
+    }
+    return [...byStage.values()].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [questionItemScoped]);
+
+  useEffect(() => {
+    const ok = new Set(stageOptions.map((s) => s.meq_stage_id));
+    if (selectedStageId && !ok.has(selectedStageId)) {
+      setSelectedStageId("");
+      setSelectedStudentId("");
+    }
+  }, [stageOptions, selectedStageId]);
+
+  useEffect(() => {
+    if (!selectedQuestionItemId) return;
+    if (stageOptions.length === 1) {
+      setSelectedStageId((prev) => (prev === stageOptions[0]!.meq_stage_id ? prev : stageOptions[0]!.meq_stage_id));
+      return;
+    }
+  }, [selectedQuestionItemId, stageOptions]);
+
+  const stageScoped = useMemo(
+    () =>
+      selectedStageId ? questionItemScoped.filter((r) => r.meq_stage_id === selectedStageId) : [],
+    [questionItemScoped, selectedStageId],
+  );
+
   const studentOptions = useMemo(() => {
     const ordered: { user_id: string; label: string }[] = [];
     const seen = new Set<string>();
-    for (const r of questionScoped) {
+    for (const r of stageScoped) {
       if (seen.has(r.user_id)) continue;
       seen.add(r.user_id);
       const pf = studentProfiles[r.user_id];
@@ -204,7 +253,7 @@ export default function GradingDashboard() {
     }
     ordered.sort((a, b) => a.label.localeCompare(b.label));
     return ordered;
-  }, [questionScoped, studentProfiles]);
+  }, [stageScoped, studentProfiles]);
 
   useEffect(() => {
     const ids = new Set(studentOptions.map((s) => s.user_id));
@@ -214,11 +263,11 @@ export default function GradingDashboard() {
   }, [studentOptions, selectedStudentId]);
 
   useEffect(() => {
-    if (!questionScoped.length) {
+    if (!stageScoped.length) {
       setStudentProfiles({});
       return;
     }
-    const uids = [...new Set(questionScoped.map((r) => r.user_id))];
+    const uids = [...new Set(stageScoped.map((r) => r.user_id))];
     let cancelled = false;
     void (async () => {
       const { data, error: pe } = await supabase.from("profiles").select("id, email, full_name").in("id", uids);
@@ -236,15 +285,15 @@ export default function GradingDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [questionScoped]);
+  }, [stageScoped]);
 
   const studentResponses = useMemo(() => {
     if (!selectedStudentId) return [];
-    const rows = questionScoped.filter((r) => r.user_id === selectedStudentId);
+    const rows = stageScoped.filter((r) => r.user_id === selectedStudentId);
     return [...rows].sort(
       (a, b) => a.stage_order - b.stage_order || a.item_order - b.item_order,
     );
-  }, [selectedStudentId, questionScoped]);
+  }, [selectedStudentId, stageScoped]);
 
   const handleInputChange = (
     responseId: string,
@@ -423,7 +472,14 @@ export default function GradingDashboard() {
   }
 
   const pickReady =
-    selectedCourse && selectedYear !== "" && selectedQuestionItemId && selectedStudentId;
+    !!(
+      selectedCourse &&
+      selectedYear !== "" &&
+      selectedQuestionItemId &&
+      selectedStageId &&
+      selectedStudentId
+    ) &&
+    stageOptions.some((s) => s.meq_stage_id === selectedStageId);
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -432,11 +488,10 @@ export default function GradingDashboard() {
           <div>
             <h1 className="text-3xl font-bold text-blue-800 tracking-tight">MEQ grading</h1>
             <p className="text-sm text-slate-600 mt-2 max-w-3xl">
-              Choose <strong>subject code</strong>, <strong>academic year</strong>, a <strong>question ID</strong> (
-              <code className="text-xs bg-slate-100 px-1 rounded">meq_stage_items.id</code>), then a{" "}
-              <strong>student</strong>. The question list shows only IDs and exam codes (stage placement appears after you
-              pick a student).
-              Grading history is append-only JSON; AI training records corrections for future model work.
+              Choose <strong>subject code</strong>, <strong>year</strong>, <strong>question ID</strong>, then{" "}
+              <strong>stage</strong>, then <strong>student</strong>. The question list stays compact (UUID + exam code);
+              you pick stage next to lock the vignette/block for grading. Grading history is append-only JSON; AI
+              training captures corrections separately.
             </p>
           </div>
           <Link
@@ -467,7 +522,8 @@ export default function GradingDashboard() {
               <h2 className="text-lg font-semibold text-gray-900">Start grading</h2>
               <p className="text-sm text-gray-600">
                 <strong>Subject code</strong> → <strong>Year</strong> → <strong>Question ID</strong> →{" "}
-                <strong>Student</strong>. Only locked submissions in your grading scope are listed.
+                <strong>Stage</strong> → <strong>Student</strong>. Only locked submissions in your grading scope are
+                listed.
               </p>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
@@ -478,6 +534,7 @@ export default function GradingDashboard() {
                       setSelectedCourse(e.target.value);
                       setSelectedYear("");
                       setSelectedQuestionItemId("");
+                      setSelectedStageId("");
                       setSelectedStudentId("");
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 bg-white"
@@ -499,6 +556,7 @@ export default function GradingDashboard() {
                       const v = e.target.value;
                       setSelectedYear(v === "" ? "" : Number(v));
                       setSelectedQuestionItemId("");
+                      setSelectedStageId("");
                       setSelectedStudentId("");
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 bg-white disabled:bg-gray-100"
@@ -513,13 +571,14 @@ export default function GradingDashboard() {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Question ID <span className="font-normal text-gray-500">(UUID · exam — no stage in this list)</span>
+                    Question ID <span className="font-normal text-gray-500">(UUID · exam only)</span>
                   </label>
                   <select
                     value={selectedQuestionItemId}
                     disabled={selectedYear === ""}
                     onChange={(e) => {
                       setSelectedQuestionItemId(e.target.value);
+                      setSelectedStageId("");
                       setSelectedStudentId("");
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 bg-white disabled:bg-gray-100 text-sm"
@@ -533,10 +592,36 @@ export default function GradingDashboard() {
                   </select>
                 </div>
                 <div className="md:col-span-2">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Stage</label>
+                  <select
+                    value={selectedStageId}
+                    disabled={!selectedQuestionItemId}
+                    onChange={(e) => {
+                      setSelectedStageId(e.target.value);
+                      setSelectedStudentId("");
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2 bg-white disabled:bg-gray-100 text-sm"
+                  >
+                    <option value="">
+                      {selectedQuestionItemId ? "Select stage…" : "Select question ID first"}
+                    </option>
+                    {stageOptions.map((s) => (
+                      <option key={s.meq_stage_id} value={s.meq_stage_id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedQuestionItemId && stageOptions.length === 0 ? (
+                    <p className="text-xs text-amber-800 mt-1">
+                      No submissions for this question ID in your scope.
+                    </p>
+                  ) : null}
+                </div>
+                <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Student</label>
                   <select
                     value={selectedStudentId}
-                    disabled={!selectedQuestionItemId}
+                    disabled={!selectedStageId}
                     onChange={(e) => setSelectedStudentId(e.target.value)}
                     className="w-full border border-gray-300 rounded px-3 py-2 bg-white disabled:bg-gray-100"
                   >
@@ -552,23 +637,10 @@ export default function GradingDashboard() {
             </div>
             {!pickReady ? (
               <div className="text-center text-gray-500 border border-dashed border-gray-300 rounded-lg py-10">
-                Choose subject code, year, question ID, and student to open the grading panel.
+                Choose subject code, year, question ID, stage, and student to open the grading panel.
               </div>
             ) : (
               <div className="space-y-6">
-                {studentResponses.length === 1 ? (
-                  <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950 shadow-sm">
-                    <span className="font-semibold">Stage placement</span>
-                    {" — "}for this student&apos;s submission:{" "}
-                    Stage <strong className="tabular-nums">{studentResponses[0]!.stage_order}</strong>
-                    {studentResponses[0]!.item_order > 1 ? (
-                      <span>
-                        {" "}
-                        · item <strong className="tabular-nums">{studentResponses[0]!.item_order}</strong>
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
                 {studentResponses.map((response) => {
                   const input = gradeInputs[response.id] || {
                     score:
