@@ -15,12 +15,14 @@ interface ResponseRow {
   ai_rationale_feedback?: string | null;
   test_label: string;
   stage_order: number;
+  stage_information: string | null;
   created_by: string | null;
   rubric_criteria: string | null;
   max_score: number | null;
   graded_by: string | null;
   question_text: string | null;
   course_code: string | null;
+  test_public_code: string | null;
 }
 
 interface GradeInputState {
@@ -85,11 +87,12 @@ export default function GradingDashboard() {
         id, user_id, meq_stage_id, answer_text, status, human_override_score, ai_rationale_feedback, graded_by,
         meq_test_stages!inner(
           sequence_order,
+          stage_information,
           rubric_criteria,
           max_score,
           question_text,
           meq_test_id,
-          meq_tests!inner( id, created_by, subject, course_code )
+          meq_tests!inner( id, created_by, subject, course_code, public_code )
         )
       `
       )
@@ -114,11 +117,18 @@ export default function GradingDashboard() {
       graded_by: string | null;
       meq_test_stages: {
         sequence_order: number;
+        stage_information: string | null;
         rubric_criteria: string | null;
         max_score: number | null;
         question_text: string;
         meq_test_id: string;
-        meq_tests: { id: string; created_by: string; subject: string; course_code: string };
+        meq_tests: {
+          id: string;
+          created_by: string;
+          subject: string;
+          course_code: string;
+          public_code: string | null;
+        };
       };
     };
     const raw = (data as unknown as D[] | null) || [];
@@ -143,12 +153,14 @@ export default function GradingDashboard() {
         ai_rationale_feedback: r.ai_rationale_feedback,
         test_label: `${r.meq_test_stages.meq_tests.subject} (${r.meq_test_stages.meq_tests.course_code})`,
         stage_order: r.meq_test_stages.sequence_order,
+        stage_information: r.meq_test_stages.stage_information,
         created_by: r.meq_test_stages.meq_tests.created_by,
         rubric_criteria: r.meq_test_stages.rubric_criteria,
         max_score: r.meq_test_stages.max_score,
         graded_by: r.graded_by,
         question_text: r.meq_test_stages.question_text,
         course_code: r.meq_test_stages.meq_tests.course_code,
+        test_public_code: r.meq_test_stages.meq_tests.public_code ?? null,
       }))
     );
     setLoading(false);
@@ -327,17 +339,41 @@ export default function GradingDashboard() {
   const departmentScopedResponses = selectedCourse
     ? responses.filter((r) => r.course_code === selectedCourse)
     : [];
-  const questionOptions = Array.from(
-    new Map(
-      departmentScopedResponses.map((r) => [
-        r.meq_stage_id,
+  /** One entry per MEQ stage (UUID); label disambiguates multiple MEQs sharing a course_code. Sorted by exam, then stage. */
+  const questionOptions = [...departmentScopedResponses
+    .reduce(
+      (
+        map,
+        r,
+      ) => {
+        if (!map.has(r.meq_stage_id)) {
+          const codeTag =
+            r.test_public_code?.trim() ||
+            (r.meq_test_id ? `exam ${r.meq_test_id.slice(0, 8)}…` : "");
+          map.set(r.meq_stage_id, {
+            stageId: r.meq_stage_id,
+            meq_test_id: r.meq_test_id,
+            sequence_order: r.stage_order,
+            label: `${r.test_label} · ${codeTag ? `${codeTag} · ` : ""}Stage ${r.stage_order}`,
+            questionText: r.question_text ?? "",
+          });
+        }
+        return map;
+      },
+      new Map<
+        string,
         {
-          stageId: r.meq_stage_id,
-          label: `${r.test_label} · Stage ${r.stage_order}`,
-          questionText: r.question_text ?? "",
-        },
-      ])
-    ).values()
+          stageId: string;
+          meq_test_id: string;
+          sequence_order: number;
+          label: string;
+          questionText: string;
+        }
+      >(),
+    )
+    .values()].sort(
+    (a, b) =>
+      a.meq_test_id.localeCompare(b.meq_test_id) || a.sequence_order - b.sequence_order,
   );
   const visibleResponses = selectedStage
     ? departmentScopedResponses.filter((r) => r.meq_stage_id === selectedStage)
@@ -428,18 +464,49 @@ export default function GradingDashboard() {
                 error: null,
               };
               const canEdit = canEditRow(response);
+              const examStableLabel =
+                response.test_public_code?.trim() ||
+                `MEQ row ${response.meq_test_id.slice(0, 8)}…`;
               return (
                 <div
                   key={response.id}
                   className="border border-gray-300 bg-gray-50 rounded-lg shadow-sm p-6"
                 >
-                  <div className="mb-2 text-sm text-gray-700">
-                    <span className="font-semibold">{response.test_label}</span>
-                    <span className="ml-2 text-gray-500">· Stage {response.stage_order}</span>
+                  <div className="mb-2 text-sm text-gray-800 space-y-1">
+                    <div>
+                      <span className="font-semibold">{response.test_label}</span>
+                      <span className="ml-2 text-gray-600">
+                        · Sequential stage <strong className="text-gray-900">{response.stage_order}</strong>{" "}
+                        <span className="text-gray-500">(ordered 1→N within this MEQ)</span>
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-600 font-mono break-all">
+                      MEQ stable id / code:{" "}
+                      <span className="text-gray-900 font-semibold">{examStableLabel}</span>
+                      {" · "}
+                      <span className="text-gray-500">stage row UUID {response.meq_stage_id}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 pt-1">
+                      The prompt and rubric below are loaded from this stage row — they always match each other.
+                      Numbers inside the student’s free text are their own; compare them to this official prompt,
+                      not the rubric numbering alone.
+                    </p>
                   </div>
                   {response.rubric_criteria ? (
                     <div className="mb-3 bg-blue-50 border border-blue-200 rounded-md px-4 py-3 text-sm text-blue-900 whitespace-pre-wrap">
                       <span className="font-semibold">Rubric:</span> {response.rubric_criteria}
+                    </div>
+                  ) : null}
+                  {response.stage_information?.trim() ? (
+                    <div className="mb-3 bg-slate-50 border border-slate-200 rounded-md px-4 py-3 text-sm text-slate-900 whitespace-pre-wrap">
+                      <div className="font-semibold text-slate-800 mb-1">Stage information (shown to student)</div>
+                      {response.stage_information}
+                    </div>
+                  ) : null}
+                  {response.question_text ? (
+                    <div className="mb-3 bg-white border border-gray-200 rounded-md px-4 py-3 text-sm text-gray-900 whitespace-pre-wrap">
+                      <div className="font-semibold text-gray-800 mb-1">Official question prompt (shown to student)</div>
+                      {response.question_text}
                     </div>
                   ) : null}
                   <div className="mb-1">
@@ -447,11 +514,13 @@ export default function GradingDashboard() {
                     <span className="text-gray-900 font-mono">{response.user_id}</span>
                   </div>
                   <div className="mb-1">
-                    <span className="text-xs font-semibold text-gray-600 mr-3">Stage (response) ID</span>
-                    <span className="text-gray-900 font-mono text-sm break-all">{response.meq_stage_id}</span>
+                    <span className="text-xs font-semibold text-gray-600 mr-3">Submission row id</span>
+                    <span className="text-gray-900 font-mono text-sm break-all">{response.id}</span>
                   </div>
                   <div className="mb-4">
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Student answer</label>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">
+                      Student reply (stored for this submission only)
+                    </label>
                     <div className="bg-yellow-50 border border-yellow-200 rounded-md px-4 py-3 text-base text-gray-800 font-mono shadow-inner whitespace-pre-wrap break-words">
                       {response.answer_text || (
                         <span className="italic text-gray-400">(No answer provided)</span>
