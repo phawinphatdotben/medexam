@@ -188,7 +188,10 @@ export default function StudentMeqExamPage() {
           setComplete(true);
         } else {
           examSessionStartRef.current = Date.now();
-          setCurrentStageIndex(firstOpenIndex(st, resMap));
+          // Practice: always open at stage 1 so prior locked attempts are reviewed in order
+          // ("Continue" per stage) instead of jumping to the first unlocked stage.
+          // Real tests: resume at the first stage that is not yet locked.
+          setCurrentStageIndex(isPractice ? 0 : firstOpenIndex(st, resMap));
         }
         setLoading(false);
       }
