@@ -110,7 +110,13 @@ export default function StudentMeqExamPage() {
         }
         return;
       }
-      if (me?.role === "student" && me.medical_student_year != null && me.medical_student_year !== testData.test_year) {
+      const tf = (testData.test_function as "practice" | "real_test" | null) ?? "real_test";
+      if (
+        me?.role === "student" &&
+        tf !== "practice" &&
+        me.medical_student_year != null &&
+        me.medical_student_year !== testData.test_year
+      ) {
         if (isMounted) {
           setError("This test is not available for your year.");
           setLoading(false);

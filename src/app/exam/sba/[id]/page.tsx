@@ -86,7 +86,12 @@ export default function StudentSbaExamPage() {
         }
         return;
       }
-      if (me?.role === "student" && me.medical_student_year != null && me.medical_student_year !== t.test_year) {
+      if (
+        me?.role === "student" &&
+        t.test_function !== "practice" &&
+        me.medical_student_year != null &&
+        me.medical_student_year !== t.test_year
+      ) {
         if (m) {
           setError("This test is not available for your year.");
           setLoading(false);
