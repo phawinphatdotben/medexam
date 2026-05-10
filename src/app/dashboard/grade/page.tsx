@@ -160,18 +160,13 @@ export default function GradingDashboard() {
 
   const questionOptions: QuestionPick[] = useMemo(() => {
     const m = new Map<string, QuestionPick>();
-    const preview = (q: string | null) => {
-      const t = (q ?? "").trim();
-      if (!t) return "(no prompt text)";
-      return t.length <= 56 ? t : `${t.slice(0, 56)}…`;
-    };
     for (const r of courseYearScoped) {
       if (!m.has(r.meq_stage_item_id)) {
         const codeTag = r.test_public_code?.trim() || `MEQ-${r.meq_test_id.slice(0, 8)}`;
         const qid = r.meq_stage_item_id;
         m.set(qid, {
           meq_stage_item_id: qid,
-          label: `Question ID ${qid} · Exam ${codeTag} — ${preview(r.question_text)}`,
+          label: `${qid} · ${codeTag}`,
           sortKey: `${codeTag}-${qid}`,
         });
       }
@@ -437,9 +432,10 @@ export default function GradingDashboard() {
           <div>
             <h1 className="text-3xl font-bold text-blue-800 tracking-tight">MEQ grading</h1>
             <p className="text-sm text-slate-600 mt-2 max-w-3xl">
-              Choose <strong>department</strong>, <strong>academic year</strong>, a <strong>question ID</strong> (
+              Choose <strong>subject code</strong>, <strong>academic year</strong>, a <strong>question ID</strong> (
               <code className="text-xs bg-slate-100 px-1 rounded">meq_stage_items.id</code>), then a{" "}
-              <strong>student</strong>. The question ID labels each gradable prompt; exam code is shown for context only.
+              <strong>student</strong>. The question list shows only IDs and exam codes (stage placement appears after you
+              pick a student).
               Grading history is append-only JSON; AI training records corrections for future model work.
             </p>
           </div>
@@ -470,12 +466,12 @@ export default function GradingDashboard() {
             <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">Start grading</h2>
               <p className="text-sm text-gray-600">
-                <strong>Department</strong> → <strong>Year</strong> → <strong>Question ID</strong> →{" "}
+                <strong>Subject code</strong> → <strong>Year</strong> → <strong>Question ID</strong> →{" "}
                 <strong>Student</strong>. Only locked submissions in your grading scope are listed.
               </p>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Department</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Subject code</label>
                   <select
                     value={selectedCourse}
                     onChange={(e) => {
@@ -486,7 +482,7 @@ export default function GradingDashboard() {
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2 bg-white"
                   >
-                    <option value="">Select department…</option>
+                    <option value="">Select subject code…</option>
                     {departmentOptions.map((code) => (
                       <option key={code} value={code}>
                         {code}
@@ -517,7 +513,7 @@ export default function GradingDashboard() {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Question ID <span className="font-normal text-gray-500">(graders pick the item UUID)</span>
+                    Question ID <span className="font-normal text-gray-500">(UUID · exam — no stage in this list)</span>
                   </label>
                   <select
                     value={selectedQuestionItemId}
@@ -556,10 +552,23 @@ export default function GradingDashboard() {
             </div>
             {!pickReady ? (
               <div className="text-center text-gray-500 border border-dashed border-gray-300 rounded-lg py-10">
-                Choose department, year, question, and student to open the grading panel.
+                Choose subject code, year, question ID, and student to open the grading panel.
               </div>
             ) : (
-              <div className="space-y-8">
+              <div className="space-y-6">
+                {studentResponses.length === 1 ? (
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950 shadow-sm">
+                    <span className="font-semibold">Stage placement</span>
+                    {" — "}for this student&apos;s submission:{" "}
+                    Stage <strong className="tabular-nums">{studentResponses[0]!.stage_order}</strong>
+                    {studentResponses[0]!.item_order > 1 ? (
+                      <span>
+                        {" "}
+                        · item <strong className="tabular-nums">{studentResponses[0]!.item_order}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {studentResponses.map((response) => {
                   const input = gradeInputs[response.id] || {
                     score:
@@ -578,17 +587,21 @@ export default function GradingDashboard() {
                       key={response.id}
                       className="border border-gray-300 bg-gray-50 rounded-lg shadow-sm p-6"
                     >
-                      <div className="mb-2 text-sm text-gray-800 space-y-1">
+                      {studentResponses.length > 1 ? (
+                        <div className="mb-3 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-950">
+                          <span className="font-semibold">Stage placement:</span>{" "}
+                          <strong className="tabular-nums">{response.stage_order}</strong>
+                          {response.item_order > 1 ? (
+                            <span>
+                              {" "}
+                              · item <strong className="tabular-nums">{response.item_order}</strong>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="mb-4 text-sm text-gray-800 space-y-1">
                         <div>
                           <span className="font-semibold">{response.test_label}</span>
-                          <span className="ml-2 text-gray-600">
-                            · Stage <strong className="text-gray-900">{response.stage_order}</strong>
-                            {response.item_order > 1 ? (
-                              <span className="ml-1">
-                                · Part <strong>{response.item_order}</strong>
-                              </span>
-                            ) : null}
-                          </span>
                         </div>
                         <div className="text-xs text-gray-600 font-mono break-all">
                           Exam code/id:{" "}
@@ -596,15 +609,13 @@ export default function GradingDashboard() {
                           {" · "}
                           Question ID <span className="font-semibold">{response.meq_stage_item_id}</span>
                         </div>
-                      </div>
-                      {response.rubric_criteria ? (
-                        <div className="mb-3 bg-blue-50 border border-blue-200 rounded-md px-4 py-3 text-sm text-blue-900 whitespace-pre-wrap">
-                          <span className="font-semibold">Rubric (this question):</span>{" "}
-                          {response.rubric_criteria}
+                        <div className="text-xs pt-1">
+                          <span className="font-semibold text-gray-600">Student ID:</span>{" "}
+                          <span className="text-gray-900 font-mono">{response.user_id}</span>
                         </div>
-                      ) : null}
+                      </div>
                       {response.stage_information?.trim() ? (
-                        <div className="mb-3 bg-slate-50 border border-slate-200 rounded-md px-4 py-3 text-sm text-slate-900 whitespace-pre-wrap">
+                        <div className="mb-4 bg-slate-50 border border-slate-200 rounded-md px-4 py-3 text-sm text-slate-900 whitespace-pre-wrap">
                           <div className="font-semibold text-slate-800 mb-1">
                             Stage information (revealed before this block)
                           </div>
@@ -612,25 +623,37 @@ export default function GradingDashboard() {
                         </div>
                       ) : null}
                       {response.question_text ? (
-                        <div className="mb-3 bg-white border border-gray-200 rounded-md px-4 py-3 text-sm text-gray-900 whitespace-pre-wrap">
+                        <div className="mb-4 bg-white border border-gray-200 rounded-md px-4 py-3 text-sm text-gray-900 whitespace-pre-wrap">
                           <div className="font-semibold text-gray-800 mb-1">
                             Prompt shown to student
                           </div>
                           {response.question_text}
                         </div>
                       ) : null}
-                      <div className="mb-1">
-                        <span className="text-xs font-semibold text-gray-600 mr-3">Student ID</span>
-                        <span className="text-gray-900 font-mono">{response.user_id}</span>
-                      </div>
-                      <div className="mb-4">
-                        <label className="block text-sm font-bold text-gray-700 mb-1">
-                          Student reply
-                        </label>
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-md px-4 py-3 text-base text-gray-800 font-mono shadow-inner whitespace-pre-wrap break-words">
-                          {response.answer_text || (
-                            <span className="italic text-gray-400">(No answer provided)</span>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 items-start">
+                        <div className="min-w-0 lg:sticky lg:top-24 lg:max-h-[min(70vh,520px)] lg:overflow-y-auto space-y-2">
+                          <div className="text-xs font-bold text-gray-700 uppercase tracking-wide">
+                            Rubric (for scoring)
+                          </div>
+                          {response.rubric_criteria ? (
+                            <div className="bg-blue-50 border border-blue-200 rounded-md px-4 py-3 text-sm text-blue-900 whitespace-pre-wrap">
+                              {response.rubric_criteria}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-500 border border-dashed border-gray-200 rounded-md px-3 py-4">
+                              No rubric text on file for this prompt.
+                            </div>
                           )}
+                        </div>
+                        <div className="min-w-0 space-y-2">
+                          <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide">
+                            Student reply
+                          </label>
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-md px-4 py-3 text-base text-gray-800 font-mono shadow-inner whitespace-pre-wrap break-words min-h-[8rem]">
+                            {response.answer_text || (
+                              <span className="italic text-gray-400">(No answer provided)</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       {response.grading_history?.length ? (

@@ -270,7 +270,7 @@ export default function GradeTestResultsPage() {
             <h1 className="text-3xl font-bold text-blue-800 tracking-tight mt-2">Test results</h1>
             <p className="text-sm text-slate-600 mt-2 max-w-3xl">
               Per exam and student: total points awarded so far across all graded prompts, and the full exam maximum
-              (sum of item rubrics). Filter by department and year to export a CSV.
+              (sum of item rubrics). Filter by subject code and year to export a CSV.
             </p>
           </div>
           <button
@@ -287,7 +287,7 @@ export default function GradeTestResultsPage() {
       <main className="flex-1 w-full max-w-5xl mx-auto mt-6 px-6 pb-16">
         <div className="grid md:grid-cols-2 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Department</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Subject code</label>
             <select
               className="w-full border border-gray-300 rounded px-3 py-2 bg-white"
               value={selectedCourse}
@@ -296,7 +296,7 @@ export default function GradeTestResultsPage() {
                 setSelectedYear("");
               }}
             >
-              <option value="">Select department…</option>
+              <option value="">Select subject code…</option>
               {departmentOptions.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -331,7 +331,7 @@ export default function GradeTestResultsPage() {
           <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4">{error}</div>
         ) : !pickReady ? (
           <p className="text-gray-500 border border-dashed border-gray-300 rounded-lg py-10 text-center">
-            Choose department and year to load the summary table.
+            Choose subject code and year to load the summary table.
           </p>
         ) : (
           <>
