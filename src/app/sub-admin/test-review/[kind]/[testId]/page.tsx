@@ -1,6 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+
+const REVIEW_STATUS_VALUES = ["pending_committee", "approved", "rejected"] as const;
+
+/** Option `id` strings from SBA options JSON (for correct-answer dropdown). */
+function parseOptionsJsonIds(optionsJson: string): string[] {
+  try {
+    const parsed = JSON.parse(optionsJson) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const ids: string[] = [];
+    for (const o of parsed) {
+      if (o && typeof o === "object" && typeof (o as { id?: unknown }).id === "string") {
+        ids.push((o as { id: string }).id);
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -24,6 +43,7 @@ type SbaQDetail = {
   sequence_order: number;
   stem: string;
   options: unknown;
+  correct_option_id: string | null;
 };
 
 type MeqStageDraft = {
@@ -36,6 +56,8 @@ type MeqStageDraft = {
 type SbaQDraft = {
   stem: string;
   optionsJson: string;
+  /** Must match one of the string ids in options JSON. */
+  correct_option_id: string;
 };
 
 export default function CommitteeTestReviewPage() {
@@ -68,9 +90,14 @@ export default function CommitteeTestReviewPage() {
   const [sbaQuestions, setSbaQuestions] = useState<SbaQDetail[]>([]);
   const [sbaDrafts, setSbaDrafts] = useState<Record<string, SbaQDraft>>({});
 
+  const [testPublicCode, setTestPublicCode] = useState<string | null>(null);
+  const [reviewStatusDraft, setReviewStatusDraft] =
+    useState<(typeof REVIEW_STATUS_VALUES)[number]>("pending_committee");
+
   const [savingOverview, setSavingOverview] = useState(false);
   const [savingStageId, setSavingStageId] = useState<string | null>(null);
   const [savingQuestionId, setSavingQuestionId] = useState<string | null>(null);
+  const [savingReviewStatus, setSavingReviewStatus] = useState(false);
   const [okMessage, setOkMessage] = useState<string | null>(null);
 
   const canEdit = myRole === "admin" || myRole === "sub_admin";
@@ -85,7 +112,9 @@ export default function CommitteeTestReviewPage() {
     if (kind === "meq") {
       const { data: test, error: te } = await supabase
         .from("meq_tests")
-        .select("id, subject, course_code, vignette, first_page_stem, time_limit_minutes")
+        .select(
+          "id, subject, course_code, vignette, first_page_stem, time_limit_minutes, review_status, public_code",
+        )
         .eq("id", testId)
         .maybeSingle();
       if (te || !test) {
@@ -105,6 +134,13 @@ export default function CommitteeTestReviewPage() {
         first_page_stem: test.first_page_stem ?? "",
         vignette: test.vignette ?? "",
       });
+      setTestPublicCode(test.public_code ?? null);
+      const rs = test.review_status as string | undefined;
+      setReviewStatusDraft(
+        rs && REVIEW_STATUS_VALUES.includes(rs as (typeof REVIEW_STATUS_VALUES)[number])
+          ? (rs as (typeof REVIEW_STATUS_VALUES)[number])
+          : "pending_committee",
+      );
       const { data: st, error: se } = await supabase
         .from("meq_test_stages")
         .select("id, sequence_order, stage_information, question_text, rubric_criteria, max_score")
@@ -130,7 +166,7 @@ export default function CommitteeTestReviewPage() {
     } else {
       const { data: test, error: te } = await supabase
         .from("sba_tests")
-        .select("id, subject, subject_code")
+        .select("id, subject, subject_code, review_status, public_code")
         .eq("id", testId)
         .maybeSingle();
       if (te || !test) {
@@ -140,9 +176,16 @@ export default function CommitteeTestReviewPage() {
       }
       setSbaMeta({ subject: test.subject, subject_code: test.subject_code });
       setLabel(`${test.subject} · ${test.subject_code}`);
+      setTestPublicCode(test.public_code ?? null);
+      const rs = test.review_status as string | undefined;
+      setReviewStatusDraft(
+        rs && REVIEW_STATUS_VALUES.includes(rs as (typeof REVIEW_STATUS_VALUES)[number])
+          ? (rs as (typeof REVIEW_STATUS_VALUES)[number])
+          : "pending_committee",
+      );
       const { data: qs, error: qe } = await supabase
         .from("sba_test_questions")
-        .select("id, sequence_order, stem, options")
+        .select("id, sequence_order, stem, options, correct_option_id")
         .eq("sba_test_id", testId)
         .order("sequence_order", { ascending: true });
       if (qe) {
@@ -157,6 +200,7 @@ export default function CommitteeTestReviewPage() {
         qd[q.id] = {
           stem: q.stem,
           optionsJson: JSON.stringify(q.options ?? [], null, 2),
+          correct_option_id: q.correct_option_id ?? "",
         };
       }
       setSbaDrafts(qd);
@@ -306,11 +350,22 @@ export default function CommitteeTestReviewPage() {
       }
     }
 
+    const optIds = parseOptionsJsonIds(draft.optionsJson);
+    const keyId = draft.correct_option_id.trim();
+    if (!keyId || !optIds.includes(keyId)) {
+      setErr(
+        `Question ${prev.sequence_order}: choose the correct answer — its id must match one of the option ids in JSON.`,
+      );
+      setSavingQuestionId(null);
+      return;
+    }
+
     const { error } = await supabase
       .from("sba_test_questions")
       .update({
         stem,
         options: optionsParsed,
+        correct_option_id: keyId,
       })
       .eq("id", questionId);
 
@@ -320,6 +375,25 @@ export default function CommitteeTestReviewPage() {
       return;
     }
     setOkMessage(`Question ${prev.sequence_order} saved.`);
+    void load();
+  };
+
+  const saveReviewStatus = async () => {
+    if (!canEdit || !kind || !testId) return;
+    setSavingReviewStatus(true);
+    setErr(null);
+    setOkMessage(null);
+    const table = kind === "meq" ? "meq_tests" : "sba_tests";
+    const { error } = await supabase
+      .from(table)
+      .update({ review_status: reviewStatusDraft })
+      .eq("id", testId);
+    setSavingReviewStatus(false);
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    setOkMessage("Review status saved.");
     void load();
   };
 
@@ -550,6 +624,14 @@ export default function CommitteeTestReviewPage() {
                 ))
               : null}
           </ul>
+          {q.correct_option_id ? (
+            <p className="text-xs text-slate-600 pt-1">
+              Correct option id:{" "}
+              <span className="font-mono font-medium text-slate-800">{q.correct_option_id}</span>
+            </p>
+          ) : (
+            <p className="text-xs text-amber-700 pt-1">No correct option set.</p>
+          )}
         </section>
       );
     }
@@ -559,7 +641,7 @@ export default function CommitteeTestReviewPage() {
         <div className="font-semibold text-slate-900">
           Question {q.sequence_order}
           <span className="text-slate-500 font-normal text-xs ml-2">
-            Save this item after changing stem or options.
+            Save this item after changing stem, options, or correct answer.
           </span>
         </div>
         <div>
@@ -589,6 +671,30 @@ export default function CommitteeTestReviewPage() {
               }))
             }
           />
+          <p className="mt-1 text-xs text-slate-500">
+            Keep each option&apos;s <span className="font-mono">id</span> the same when you edit text so existing
+            student picks stay valid.
+          </p>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-slate-500">Correct answer</label>
+          <select
+            className="mt-1 w-full max-w-md border rounded-md px-3 py-2 bg-white"
+            value={d.correct_option_id}
+            onChange={(e) =>
+              setSbaDrafts((prev) => ({
+                ...prev,
+                [q.id]: { ...d, correct_option_id: e.target.value },
+              }))
+            }
+          >
+            <option value="">Select option id…</option>
+            {parseOptionsJsonIds(d.optionsJson).map((oid) => (
+              <option key={oid} value={oid}>
+                {oid}
+              </option>
+            ))}
+          </select>
         </div>
         <button
           type="button"
@@ -624,6 +730,14 @@ export default function CommitteeTestReviewPage() {
           <p className="text-slate-600 text-sm mt-1">
             {kind.toUpperCase()} · {label || testId}
           </p>
+          {!loading && (kind === "meq" ? meqMeta : sbaMeta) && (
+            <p className="text-xs text-slate-500 mt-2 font-mono break-all">
+              Stable identifiers (unchanged when you edit content): public code{" "}
+              <span className="text-slate-700">{testPublicCode ?? "—"}</span>
+              {" · "}
+              row id <span className="text-slate-700">{testId}</span>
+            </p>
+          )}
         </div>
 
         {isEducatorOnly && (
@@ -639,8 +753,9 @@ export default function CommitteeTestReviewPage() {
         {canEdit && (
           <div className="rounded border border-blue-200 bg-blue-50 text-blue-950 px-4 py-3 text-sm">
             <strong>Admin / sub-admin:</strong> save each block with its own button — case overview once; each
-            MEQ stage separately (question, rubric, max score); each SBA question separately (stem + options
-            JSON).
+            MEQ stage separately (question, rubric, max score); each SBA question separately (stem, options JSON,
+            correct answer). Use &quot;Review decision&quot; at the bottom to set status to approved when ready.
+            Content edits never change the test&apos;s public code or row id.
           </div>
         )}
 
@@ -672,6 +787,51 @@ export default function CommitteeTestReviewPage() {
         ) : (
           <p className="text-slate-600">No content loaded.</p>
         )}
+
+        {!loading && (kind === "meq" ? meqMeta : kind === "sba" ? sbaMeta : null) ? (
+          <section className="bg-white border border-t-4 border-t-slate-800 rounded-lg p-5 text-sm space-y-4">
+            <h2 className="font-semibold text-lg text-slate-900">Review decision</h2>
+            <p className="text-xs text-slate-600">
+              Committee review status for this test record. Students only see real tests after status is{" "}
+              <span className="font-medium">approved</span>.
+            </p>
+            {canEdit ? (
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="flex-1 max-w-md">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                    Review status
+                  </label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 bg-white"
+                    value={reviewStatusDraft}
+                    onChange={(e) =>
+                      setReviewStatusDraft(e.target.value as (typeof REVIEW_STATUS_VALUES)[number])
+                    }
+                  >
+                    <option value="pending_committee">Pending committee</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  disabled={savingReviewStatus}
+                  onClick={() => void saveReviewStatus()}
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                >
+                  {savingReviewStatus ? "Saving…" : "Save review status"}
+                </button>
+              </div>
+            ) : (
+              <p className="text-slate-800">
+                Current status:{" "}
+                <span className="font-semibold capitalize">
+                  {reviewStatusDraft.replace(/_/g, " ")}
+                </span>
+              </p>
+            )}
+          </section>
+        ) : null}
       </div>
     </div>
   );

@@ -111,7 +111,8 @@ export default function SubAdminPage() {
         })
       : filteredTests;
 
-  const canEditAwaitingTests = myRole === "sub_admin";
+  /** Admin and sub-admin can assign committees (when pending) and change review status. */
+  const canEditCommitteeTests = myRole === "sub_admin" || myRole === "admin";
 
   const load = useCallback(async () => {
     if (!accessOk || gateLoading || !myUserId || !myRole) return;
@@ -255,7 +256,7 @@ export default function SubAdminPage() {
   };
 
   const updateTest = async (row: TestRow) => {
-    if (!canEditAwaitingTests || row.review_status !== "pending_committee") return;
+    if (!canEditCommitteeTests) return;
     setSaving(`t-${row.kind}-${row.id}`);
     setErr(null);
     const table = row.kind === "SBA" ? "sba_tests" : "meq_tests";
@@ -543,9 +544,9 @@ export default function SubAdminPage() {
 
         <section className="bg-white border rounded-lg p-6 overflow-x-auto">
           <h2 className="font-semibold text-lg mb-3">
-            {canEditAwaitingTests ? "Tests in your scope (assign & status)" : "Tests assigned to your exam review committees"}
+            {canEditCommitteeTests ? "Tests (assign committee & review status)" : "Tests assigned to your exam review committees"}
           </h2>
-          {!canEditAwaitingTests && (
+          {!canEditCommitteeTests && (
             <p className="text-sm text-slate-600 mb-3">
               You&apos;ll see tests that match your committee&apos;s catalog code, year, and track (formative vs summative),
               including tests not yet linked to a committee. Only tests explicitly assigned to your committee show the
@@ -600,7 +601,7 @@ export default function SubAdminPage() {
                       <select
                         className="border rounded px-1 py-0.5 max-w-[220px] text-xs"
                         value={t.committee_id || ""}
-                        disabled={!canEditAwaitingTests || t.review_status !== "pending_committee"}
+                        disabled={!canEditCommitteeTests || t.review_status !== "pending_committee"}
                         onChange={(e) => {
                           const v = e.target.value || null;
                           setTests((ts) =>
@@ -624,7 +625,7 @@ export default function SubAdminPage() {
                       <select
                         className="border rounded px-1 py-0.5 text-xs"
                         value={t.review_status}
-                        disabled={!canEditAwaitingTests || t.review_status !== "pending_committee"}
+                        disabled={!canEditCommitteeTests}
                         onChange={(e) => {
                           setTests((ts) =>
                             ts.map((x) =>
@@ -689,12 +690,12 @@ export default function SubAdminPage() {
                       )}
                     </td>
                     <td className="py-2">
-                      {canEditAwaitingTests ? (
+                      {canEditCommitteeTests ? (
                         <button
                           type="button"
                           onClick={() => updateTest(t)}
                           className="text-blue-600 font-medium text-xs"
-                          disabled={saving === `t-${t.kind}-${t.id}` || t.review_status !== "pending_committee"}
+                          disabled={saving === `t-${t.kind}-${t.id}`}
                         >
                           Save
                         </button>
