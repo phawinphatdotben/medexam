@@ -89,7 +89,26 @@ export default function SubAdminPage() {
   );
   const roleScopedTests =
     myRole === "educator"
-      ? filteredTests.filter((t) => t.committee_id != null && myCommitteeIds.includes(t.committee_id))
+      ? filteredTests.filter((t) => {
+          const assignedToMine =
+            t.committee_id != null && myCommitteeIds.includes(t.committee_id);
+          const unassignedInScope =
+            t.committee_id == null &&
+            committees.some(
+              (c) =>
+                myCommitteeIds.includes(c.id) &&
+                committeeScopesMatchTest({
+                  committeeCourseCode: c.course_code,
+                  committeeYear: c.test_year,
+                  committeePurpose: c.purpose,
+                  testCourseCode: t.subject_code,
+                  testYear: t.test_year,
+                  testFunction: t.test_function,
+                  assessmentPurpose: t.assessment_purpose,
+                }),
+            );
+          return assignedToMine || unassignedInScope;
+        })
       : filteredTests;
 
   const canEditAwaitingTests = myRole === "sub_admin";
@@ -526,6 +545,13 @@ export default function SubAdminPage() {
           <h2 className="font-semibold text-lg mb-3">
             {canEditAwaitingTests ? "Tests in your scope (assign & status)" : "Tests assigned to your exam review committees"}
           </h2>
+          {!canEditAwaitingTests && (
+            <p className="text-sm text-slate-600 mb-3">
+              You&apos;ll see tests that match your committee&apos;s catalog code, year, and track (formative vs summative),
+              including tests not yet linked to a committee. Only tests explicitly assigned to your committee show the
+              committee score controls when appropriate.
+            </p>
+          )}
           <div className="mb-4 max-w-sm">
             <label className="text-xs text-gray-600">Search course code</label>
             <input
@@ -543,7 +569,7 @@ export default function SubAdminPage() {
                 <th className="py-2 pr-2">Subject / Code / Year / Track</th>
                 <th className="py-2 pr-2">Committee</th>
                 <th className="py-2 pr-2">Status</th>
-                <th className="py-2 pr-2">Modified Angoff</th>
+                <th className="py-2 pr-2">Review / Angoff</th>
                 <th className="py-2 pr-2">Committee score</th>
                 <th className="py-2">Save</th>
               </tr>
@@ -615,12 +641,20 @@ export default function SubAdminPage() {
                       </select>
                     </td>
                     <td className="py-2 pr-2">
-                      <Link
-                        href={`/sub-admin/angoff/${t.kind === "MEQ" ? "meq" : "sba"}/${t.id}`}
-                        className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
-                      >
-                        Open Angoff
-                      </Link>
+                      <div className="flex flex-col gap-1">
+                        <Link
+                          href={`/sub-admin/test-review/${t.kind === "MEQ" ? "meq" : "sba"}/${t.id}`}
+                          className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
+                        >
+                          Full test review
+                        </Link>
+                        <Link
+                          href={`/sub-admin/angoff/${t.kind === "MEQ" ? "meq" : "sba"}/${t.id}`}
+                          className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
+                        >
+                          Modified Angoff
+                        </Link>
+                      </div>
                     </td>
                     <td className="py-2 pr-2">
                       {t.committee_id ? (

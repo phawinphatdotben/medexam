@@ -33,6 +33,19 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+/** User-facing 0–100 (% minimally competent would achieve full credit on this item). Stored as 0–1 in DB. */
+function parsePercentToP01(raw: string): number | null {
+  const x = parseFloat(raw.trim().replace("%", ""));
+  if (Number.isNaN(x)) return null;
+  if (x < 0 || x > 100) return null;
+  return clamp01(x / 100);
+}
+
+function p01ToPercentDisplay(p: number): string {
+  if (!Number.isFinite(p)) return "";
+  return String(Math.round(p * 1000) / 10);
+}
+
 function preview(text: string, max = 140): string {
   const t = text.replace(/\s+/g, " ").trim();
   return t.length <= max ? t : `${t.slice(0, max)}…`;
@@ -61,6 +74,9 @@ export default function ModifiedAngoffPage() {
   const [sbaQuestions, setSbaQuestions] = useState<SbaQuestionRow[]>([]);
   const [allRatings, setAllRatings] = useState<AngoffDbRow[]>([]);
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [reviewerProfiles, setReviewerProfiles] = useState<
+    Record<string, { email: string; full_name: string | null }>
+  >({});
 
   const itemIds = useMemo(() => {
     if (kind === "meq") return meqStages.map((s) => s.id);
@@ -183,10 +199,30 @@ export default function ModifiedAngoffPage() {
         kind === "meq"
           ? mine.find((r) => r.meq_stage_id === id)
           : mine.find((r) => r.sba_question_id === id);
-      next[id] = row ? String(row.p_correct) : "";
+      next[id] = row ? p01ToPercentDisplay(row.p_correct) : "";
     }
     setInputs(next);
   }, [allRatings, round, myUserId, itemIds, kind]);
+
+  useEffect(() => {
+    const ids = [...new Set(allRatings.map((r) => r.reviewer_id))];
+    if (ids.length === 0) {
+      setReviewerProfiles({});
+      return;
+    }
+    void (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", ids);
+      if (error || !data) return;
+      const next: Record<string, { email: string; full_name: string | null }> = {};
+      for (const p of data as { id: string; email: string; full_name: string | null }[]) {
+        next[p.id] = { email: p.email, full_name: p.full_name };
+      }
+      setReviewerProfiles(next);
+    })();
+  }, [allRatings]);
 
   const panelStats = useMemo(() => {
     const byItem: Record<string, number[]> = {};
@@ -210,47 +246,34 @@ export default function ModifiedAngoffPage() {
     return { mean, countJudges: judgeSet.size };
   }, [allRatings, round, itemIds, kind]);
 
-  const mySumSba = useMemo(() => {
-    if (kind !== "sba") return 0;
-    let s = 0;
-    for (const id of itemIds) {
-      const v = parseFloat(inputs[id] || "");
-      if (!Number.isNaN(v)) s += clamp01(v);
-    }
-    return Math.round(s * 1000) / 1000;
-  }, [kind, itemIds, inputs]);
+  const reviewerIdsSorted = useMemo(() => {
+    const ids = [...new Set(allRatings.filter((r) => r.round === round).map((r) => r.reviewer_id))];
+    ids.sort();
+    return ids;
+  }, [allRatings, round]);
 
-  const panelSumSba = useMemo(() => {
-    if (kind !== "sba") return 0;
-    let s = 0;
+  const myMeanPercent = useMemo(() => {
+    let sum = 0;
+    let n = 0;
+    for (const id of itemIds) {
+      const p01 = parsePercentToP01(inputs[id] ?? "");
+      if (p01 != null) {
+        sum += p01 * 100;
+        n += 1;
+      }
+    }
+    return n === 0 ? NaN : Math.round((sum / n) * 10) / 10;
+  }, [itemIds, inputs]);
+
+  const panelMeanOfItemMeansPercent = useMemo(() => {
+    const vals: number[] = [];
     for (const id of itemIds) {
       const m = panelStats.mean[id];
-      if (Number.isFinite(m)) s += m as number;
+      if (Number.isFinite(m)) vals.push((m as number) * 100);
     }
-    return Math.round(s * 1000) / 1000;
-  }, [kind, itemIds, panelStats.mean]);
-
-  const mySumMeq = useMemo(() => {
-    if (kind !== "meq") return 0;
-    let s = 0;
-    for (const st of meqStages) {
-      const max = st.max_score ?? 10;
-      const v = parseFloat(inputs[st.id] || "");
-      if (!Number.isNaN(v)) s += clamp01(v) * max;
-    }
-    return Math.round(s * 100) / 100;
-  }, [kind, meqStages, inputs]);
-
-  const panelSumMeq = useMemo(() => {
-    if (kind !== "meq") return 0;
-    let s = 0;
-    for (const st of meqStages) {
-      const max = st.max_score ?? 10;
-      const m = panelStats.mean[st.id];
-      if (Number.isFinite(m)) s += (m as number) * max;
-    }
-    return Math.round(s * 100) / 100;
-  }, [kind, meqStages, panelStats.mean]);
+    if (vals.length === 0) return NaN;
+    return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+  }, [itemIds, panelStats.mean]);
 
   const save = async () => {
     if (!kind || !committeeId || !myUserId || !canSubmit) return;
@@ -259,13 +282,12 @@ export default function ModifiedAngoffPage() {
 
     const rows: Record<string, unknown>[] = [];
     for (const id of itemIds) {
-      const raw = parseFloat(inputs[id] ?? "");
-      if (Number.isNaN(raw)) {
-        setErr(`Enter a valid P for every item (0–1). Problem at item ${id.slice(0, 8)}…`);
+      const p = parsePercentToP01(inputs[id] ?? "");
+      if (p == null) {
+        setErr(`Enter a percentage 0–100 for every item. Problem at item ${id.slice(0, 8)}…`);
         setSaving(false);
         return;
       }
-      const p = clamp01(raw);
       const base = {
         committee_id: committeeId,
         reviewer_id: myUserId,
@@ -336,13 +358,21 @@ export default function ModifiedAngoffPage() {
               {kind.toUpperCase()} · {testLabel || testId}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => router.push("/sub-admin")}
-            className="text-sm text-blue-700 hover:underline"
-          >
-            ← Exam review committee
-          </button>
+          <div className="flex flex-col items-end gap-2">
+            <Link
+              href={`/sub-admin/test-review/${kind}/${testId}`}
+              className="text-sm font-medium text-blue-800 hover:underline"
+            >
+              Full test review (questions & rubric)
+            </Link>
+            <button
+              type="button"
+              onClick={() => router.push("/sub-admin")}
+              className="text-sm text-blue-700 hover:underline"
+            >
+              ← Exam review committee
+            </button>
+          </div>
         </div>
 
         {!committeeId && !loading && (
@@ -354,10 +384,11 @@ export default function ModifiedAngoffPage() {
 
         <section className="bg-white border rounded-lg p-5 text-sm text-slate-700 space-y-2">
           <p>
-            <span className="font-semibold">Borderline candidate:</span> minimally competent — safe to
-            practice at the expected level. For each item, enter{" "}
-            <span className="font-mono">P</span> (0–1): probability that such a candidate would achieve{" "}
-            <strong>full credit</strong> (SBA: correct option; MEQ: full rubric marks on that stage).
+            <span className="font-semibold">Modified Angoff — percentage:</span> for each item, estimate what
+            fraction of <strong>minimally competent</strong> candidates would achieve <strong>full credit</strong>{" "}
+            (SBA: correct answer; MEQ: full rubric score on that stage). Use <strong>0–100</strong>:{" "}
+            <strong>100</strong> means essentially everyone at that level would pass the item;{" "}
+            <strong>0</strong> means none would.
           </p>
           <p className="text-slate-500">
             Round 2 is typically used after panel discussion. Saved values replace your ratings for this
@@ -396,6 +427,83 @@ export default function ModifiedAngoffPage() {
           <p className="text-slate-600">No questions found for this SBA.</p>
         ) : (
           <>
+            {(myRole === "admin" || myRole === "sub_admin") && reviewerIdsSorted.length > 0 && (
+              <section className="overflow-x-auto border rounded-lg bg-white p-4">
+                <h2 className="font-semibold text-slate-900 mb-2 text-sm">
+                  Committee ratings by member (round {round}) — %
+                </h2>
+                <p className="text-xs text-slate-600 mb-3">
+                  Each cell is that reviewer&apos;s percentage for the item. Approximate consensus per item is
+                  the panel mean column in the table below.
+                </p>
+                <table className="w-full text-xs text-left min-w-[640px]">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-slate-600">
+                      <th className="py-2 px-2">#</th>
+                      <th className="py-2 px-2 max-w-[180px]">Item</th>
+                      {reviewerIdsSorted.map((rid) => (
+                        <th key={rid} className="py-2 px-2 whitespace-nowrap font-normal">
+                          {reviewerProfiles[rid]?.full_name || reviewerProfiles[rid]?.email || rid.slice(0, 8)}
+                        </th>
+                      ))}
+                      <th className="py-2 px-2">Mean %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kind === "meq"
+                      ? meqStages.map((st) => (
+                          <tr key={st.id} className="border-t">
+                            <td className="py-2 px-2 font-mono">{st.sequence_order}</td>
+                            <td className="py-2 px-2 text-slate-700">{preview(st.question_text, 80)}</td>
+                            {reviewerIdsSorted.map((rid) => {
+                              const r = allRatings.find(
+                                (x) =>
+                                  x.reviewer_id === rid &&
+                                  x.round === round &&
+                                  x.meq_stage_id === st.id,
+                              );
+                              return (
+                                <td key={rid} className="py-2 px-2 font-mono">
+                                  {r ? `${p01ToPercentDisplay(r.p_correct)}%` : "—"}
+                                </td>
+                              );
+                            })}
+                            <td className="py-2 px-2 font-mono text-blue-900">
+                              {Number.isFinite(panelStats.mean[st.id])
+                                ? `${p01ToPercentDisplay(panelStats.mean[st.id] as number)}%`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))
+                      : sbaQuestions.map((q) => (
+                          <tr key={q.id} className="border-t">
+                            <td className="py-2 px-2 font-mono">{q.sequence_order}</td>
+                            <td className="py-2 px-2 text-slate-700">{preview(q.stem, 80)}</td>
+                            {reviewerIdsSorted.map((rid) => {
+                              const r = allRatings.find(
+                                (x) =>
+                                  x.reviewer_id === rid &&
+                                  x.round === round &&
+                                  x.sba_question_id === q.id,
+                              );
+                              return (
+                                <td key={rid} className="py-2 px-2 font-mono">
+                                  {r ? `${p01ToPercentDisplay(r.p_correct)}%` : "—"}
+                                </td>
+                              );
+                            })}
+                            <td className="py-2 px-2 font-mono text-blue-900">
+                              {Number.isFinite(panelStats.mean[q.id])
+                                ? `${p01ToPercentDisplay(panelStats.mean[q.id] as number)}%`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             <div className="overflow-x-auto border rounded-lg bg-white">
               <table className="w-full text-sm">
                 <thead>
@@ -403,8 +511,8 @@ export default function ModifiedAngoffPage() {
                     <th className="py-2 px-3">#</th>
                     <th className="py-2 px-3">Item</th>
                     {kind === "meq" && <th className="py-2 px-3">Max pts</th>}
-                    <th className="py-2 px-3">Your P</th>
-                    <th className="py-2 px-3">Panel mean P</th>
+                    <th className="py-2 px-3">Your %</th>
+                    <th className="py-2 px-3">Panel mean %</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -418,8 +526,8 @@ export default function ModifiedAngoffPage() {
                             <input
                               type="number"
                               min={0}
-                              max={1}
-                              step={0.05}
+                              max={100}
+                              step={1}
                               className="w-24 border rounded px-2 py-1"
                               value={inputs[st.id] ?? ""}
                               onChange={(e) =>
@@ -429,7 +537,9 @@ export default function ModifiedAngoffPage() {
                             />
                           </td>
                           <td className="py-2 px-3 font-mono text-xs">
-                            {Number.isFinite(panelStats.mean[st.id]) ? panelStats.mean[st.id] : "—"}
+                            {Number.isFinite(panelStats.mean[st.id])
+                              ? `${p01ToPercentDisplay(panelStats.mean[st.id] as number)}%`
+                              : "—"}
                           </td>
                         </tr>
                       ))
@@ -441,8 +551,8 @@ export default function ModifiedAngoffPage() {
                             <input
                               type="number"
                               min={0}
-                              max={1}
-                              step={0.05}
+                              max={100}
+                              step={1}
                               className="w-24 border rounded px-2 py-1"
                               value={inputs[q.id] ?? ""}
                               onChange={(e) =>
@@ -452,7 +562,9 @@ export default function ModifiedAngoffPage() {
                             />
                           </td>
                           <td className="py-2 px-3 font-mono text-xs">
-                            {Number.isFinite(panelStats.mean[q.id]) ? panelStats.mean[q.id] : "—"}
+                            {Number.isFinite(panelStats.mean[q.id])
+                              ? `${p01ToPercentDisplay(panelStats.mean[q.id] as number)}%`
+                              : "—"}
                           </td>
                         </tr>
                       ))}
@@ -461,29 +573,17 @@ export default function ModifiedAngoffPage() {
             </div>
 
             <section className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm space-y-1">
-              {kind === "sba" ? (
-                <>
-                  <p>
-                    <span className="font-semibold">Your ΣP</span> (expected items correct at your
-                    judgments): <span className="font-mono">{mySumSba}</span>
-                  </p>
-                  <p>
-                    <span className="font-semibold">Panel mean ΣP</span> (mean P summed across items):{" "}
-                    <span className="font-mono">{panelSumSba}</span>
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p>
-                    <span className="font-semibold">Your expected total points</span> (Σ P × max stage
-                    score): <span className="font-mono">{mySumMeq}</span>
-                  </p>
-                  <p>
-                    <span className="font-semibold">Panel mean expected total</span>:{" "}
-                    <span className="font-mono">{panelSumMeq}</span>
-                  </p>
-                </>
-              )}
+              <p>
+                <span className="font-semibold">Your mean % across items:</span>{" "}
+                <span className="font-mono">{Number.isFinite(myMeanPercent) ? `${myMeanPercent}%` : "—"}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Panel mean of item means:</span>{" "}
+                <span className="font-mono">
+                  {Number.isFinite(panelMeanOfItemMeansPercent) ? `${panelMeanOfItemMeansPercent}%` : "—"}
+                </span>{" "}
+                <span className="text-slate-600">(average of the panel mean % per row)</span>
+              </p>
             </section>
 
             <div className="flex gap-3 items-center">

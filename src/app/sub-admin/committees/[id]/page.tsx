@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { COMMITTEE_PAGE_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
-import type { CommitteePurpose } from "@/lib/committeeScope";
+import { committeeScopesMatchTest, type CommitteePurpose } from "@/lib/committeeScope";
 
 type CommitteeRow = {
   id: string;
@@ -24,6 +24,19 @@ type ProfileRow = {
   doctor_id: string | null;
 };
 
+type ScopedTestRow = {
+  id: string;
+  kind: "MEQ" | "SBA";
+  subject: string;
+  subject_code: string;
+  test_year: number;
+  test_function: "practice" | "real_test";
+  assessment_purpose: "formative" | "summative";
+  review_status: string;
+  committee_id: string | null;
+  public_code: string | null;
+};
+
 export default function CommitteeDetailPage() {
   const params = useParams();
   const committeeId = typeof params.id === "string" ? params.id : "";
@@ -39,6 +52,8 @@ export default function CommitteeDetailPage() {
   const [searching, setSearching] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [scopedTests, setScopedTests] = useState<ScopedTestRow[]>([]);
+  const [testsLoading, setTestsLoading] = useState(false);
 
   const canManage = myRole === "sub_admin" || myRole === "admin";
 
@@ -88,6 +103,79 @@ export default function CommitteeDetailPage() {
   useEffect(() => {
     void loadMembers();
   }, [loadMembers]);
+
+  const loadScopedTests = useCallback(async () => {
+    if (!committee) return;
+    setTestsLoading(true);
+    setErr(null);
+    const cc = committee.course_code;
+    const y = committee.test_year;
+    const { data: meq, error: e1 } = await supabase
+      .from("meq_tests")
+      .select(
+        "id, subject, course_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code",
+      )
+      .eq("course_code", cc)
+      .eq("test_year", y);
+    const { data: sba, error: e2 } = await supabase
+      .from("sba_tests")
+      .select(
+        "id, subject, subject_code, test_year, test_function, assessment_purpose, review_status, committee_id, public_code",
+      )
+      .eq("subject_code", cc)
+      .eq("test_year", y);
+    setTestsLoading(false);
+    if (e1 || e2) {
+      setErr(e1?.message || e2?.message || "Could not load tests.");
+      setScopedTests([]);
+      return;
+    }
+    const merged: ScopedTestRow[] = [
+      ...((meq || []) as Record<string, unknown>[]).map((r) => ({
+        id: r.id as string,
+        kind: "MEQ" as const,
+        subject: r.subject as string,
+        subject_code: r.course_code as string,
+        test_year: r.test_year as number,
+        test_function: r.test_function as "practice" | "real_test",
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
+        review_status: r.review_status as string,
+        committee_id: (r.committee_id as string | null) ?? null,
+        public_code: (r.public_code as string | null) ?? null,
+      })),
+      ...((sba || []) as Record<string, unknown>[]).map((r) => ({
+        id: r.id as string,
+        kind: "SBA" as const,
+        subject: r.subject as string,
+        subject_code: r.subject_code as string,
+        test_year: r.test_year as number,
+        test_function: r.test_function as "practice" | "real_test",
+        assessment_purpose: r.assessment_purpose as "formative" | "summative",
+        review_status: r.review_status as string,
+        committee_id: (r.committee_id as string | null) ?? null,
+        public_code: (r.public_code as string | null) ?? null,
+      })),
+    ].filter((t) =>
+      committeeScopesMatchTest({
+        committeeCourseCode: committee.course_code,
+        committeeYear: committee.test_year,
+        committeePurpose: committee.purpose,
+        testCourseCode: t.subject_code,
+        testYear: t.test_year,
+        testFunction: t.test_function,
+        assessmentPurpose: t.assessment_purpose,
+      }),
+    );
+    merged.sort(
+      (a, b) =>
+        a.kind.localeCompare(b.kind) || a.subject.localeCompare(b.subject) || a.id.localeCompare(b.id),
+    );
+    setScopedTests(merged);
+  }, [committee]);
+
+  useEffect(() => {
+    void loadScopedTests();
+  }, [loadScopedTests]);
 
   useEffect(() => {
     const q = search.trim();
@@ -200,10 +288,90 @@ export default function CommitteeDetailPage() {
           <p className="font-semibold">Your duties (for members)</p>
           <p className="mt-1">{dutySummary || "Loading…"}</p>
           <p className="mt-2 text-blue-900/90">
-            Review assigned tests on the Assigned tests tab, complete Modified Angoff where needed, and record
-            holistic committee scores when appropriate.
+            Use the test list below and the main <strong>Assigned tests</strong> tab to open Angoff and committee
+            scores. Everything listed here matches this group&apos;s code, year, and formative/summative track.
           </p>
         </section>
+
+        {committee && (
+        <section className="bg-white border rounded-lg p-6 overflow-x-auto">
+          <h2 className="font-semibold text-lg mb-1">Tests in this group</h2>
+          <p className="text-xs text-gray-600 mb-4">
+            MEQ and SBA exams that share this committee&apos;s catalog code ({committee.course_code}), year (
+            {committee.test_year}), and track ({committee.purpose === "formative" ? "formative" : "summative"}).
+            Assignment shows whether this group is linked on the test row (sub-admins set that on{" "}
+            <Link href="/sub-admin" className="text-blue-600 hover:underline">
+              Assigned tests
+            </Link>
+            ).
+          </p>
+          {testsLoading ? (
+            <p className="text-sm text-gray-500">Loading tests…</p>
+          ) : scopedTests.length === 0 ? (
+            <p className="text-sm text-gray-500">No matching tests yet. Create an MEQ or SBA with this course code.</p>
+          ) : (
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="border-b text-gray-600">
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Test ID</th>
+                  <th className="py-2 pr-3">Subject / track</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Linked to this group</th>
+                  <th className="py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scopedTests.map((t) => {
+                  const assignedHere = t.committee_id === committeeId;
+                  const assignedElsewhere = t.committee_id != null && t.committee_id !== committeeId;
+                  const linkKind = t.kind === "MEQ" ? "meq" : "sba";
+                  return (
+                    <tr key={`${t.kind}-${t.id}`} className="border-t">
+                      <td className="py-2 pr-3 font-mono text-xs">{t.kind}</td>
+                      <td className="py-2 pr-3 font-mono text-xs">{t.public_code || "—"}</td>
+                      <td className="py-2 pr-3">
+                        <div className="font-medium text-gray-900">{t.subject}</div>
+                        <div className="text-xs text-gray-500">
+                          {t.test_function === "practice"
+                            ? "Practice · formative"
+                            : `Real test · ${t.assessment_purpose}`}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 text-xs">{t.review_status}</td>
+                      <td className="py-2 pr-3">
+                        {assignedHere ? (
+                          <span className="text-green-800 font-medium text-xs">Yes</span>
+                        ) : assignedElsewhere ? (
+                          <span className="text-amber-800 text-xs">Another committee</span>
+                        ) : (
+                          <span className="text-gray-500 text-xs">Not assigned</span>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        <div className="flex flex-col gap-1">
+                          <Link
+                            href={`/sub-admin/test-review/${linkKind}/${t.id}`}
+                            className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
+                          >
+                            Full review
+                          </Link>
+                          <Link
+                            href={`/sub-admin/angoff/${linkKind}/${t.id}`}
+                            className="text-blue-600 font-medium text-xs hover:underline whitespace-nowrap"
+                          >
+                            Angoff
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+        )}
 
         {err && (
           <div className="p-3 rounded border border-red-200 bg-red-50 text-red-800 text-sm">{err}</div>

@@ -45,6 +45,7 @@ export default function EditMeqRubricPage() {
     }
     setUserId(uid);
     const admin = staffRole === "admin";
+    const subAdmin = staffRole === "sub_admin";
 
     const { data: test, error: te } = await supabase
       .from("meq_tests")
@@ -59,7 +60,18 @@ export default function EditMeqRubricPage() {
       return;
     }
 
-    if (!admin && test.created_by !== uid) {
+    let subAdminInScope = false;
+    if (subAdmin) {
+      const { data: scopeRow } = await supabase
+        .from("sub_admin_course_scopes")
+        .select("course_code")
+        .eq("profile_id", uid)
+        .eq("course_code", test.course_code)
+        .maybeSingle();
+      subAdminInScope = !!scopeRow;
+    }
+
+    if (!admin && test.created_by !== uid && !(subAdmin && subAdminInScope)) {
       router.replace("/dashboard/my-tests");
       return;
     }
