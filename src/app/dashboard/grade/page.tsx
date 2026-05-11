@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { GRADING_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
@@ -58,11 +59,13 @@ type TestPick = {
   sortKey: string;
 };
 
-export default function GradingDashboard() {
+function GradingDashboardInner() {
   const { ready: accessOk, loading: gateLoading, userId: graderId, role: graderRole } = useRoleGate(
     GRADING_ROLES,
     { noUserRedirect: "/login", wrongRoleRedirect: "/practice-tests" },
   );
+  const searchParams = useSearchParams();
+  const prefilledRef = useRef(false);
   const [subAdminCourseScopes, setSubAdminCourseScopes] = useState<string[]>([]);
   const [scopesLoading, setScopesLoading] = useState(false);
 
@@ -126,7 +129,36 @@ export default function GradingDashboard() {
     }
     setResponses(rows as ResponseRow[]);
     setLoading(false);
-  }, [authChecking, graderId, graderRole, subAdminCourseScopes]);
+
+    if (!prefilledRef.current) {
+      prefilledRef.current = true;
+      const course = searchParams.get("course");
+      const year = searchParams.get("year");
+      const test = searchParams.get("test");
+      const stage = searchParams.get("stage");
+      const item = searchParams.get("item");
+      const student = searchParams.get("student");
+      if (course || year || test || stage || item || student) {
+        const match = rows.find(
+          (r) =>
+            (!course || r.course_code === course) &&
+            (!year || String(r.test_year) === year) &&
+            (!test || r.meq_test_id === test) &&
+            (!stage || r.meq_stage_id === stage) &&
+            (!item || r.meq_stage_item_id === item) &&
+            (!student || r.user_id === student),
+        );
+        if (match) {
+          if (match.course_code) setSelectedCourse(match.course_code);
+          setSelectedYear(match.test_year);
+          setSelectedTestId(match.meq_test_id);
+          setSelectedStageId(match.meq_stage_id);
+          setSelectedQuestionItemId(match.meq_stage_item_id);
+          setSelectedStudentId(match.user_id);
+        }
+      }
+    }
+  }, [authChecking, graderId, graderRole, subAdminCourseScopes, searchParams]);
 
   useEffect(() => {
     void loadResponses();
@@ -945,5 +977,19 @@ export default function GradingDashboard() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function GradingDashboard() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-white">
+          <span className="text-blue-700 text-lg font-medium">Loading grading…</span>
+        </div>
+      }
+    >
+      <GradingDashboardInner />
+    </Suspense>
   );
 }
