@@ -10,12 +10,19 @@ import { useRoleGate } from "@/hooks/useRoleGate";
 import { SUBJECTS, type SubjectName } from "@/lib/subjects";
 import { downloadCsv, rowToCsvLine } from "@/lib/csvDownload";
 import { parseMeqStagesCsv } from "@/lib/parseMeqStagesCsv";
+import {
+  DEFAULT_MEQ_TASK_CATEGORY,
+  MEQ_TASK_CATEGORIES,
+  type MeqTaskCategorySlug,
+  isMeqTaskCategorySlug,
+} from "@/lib/meqTaskCategories";
 
 type ItemDraft = {
   question_text: string;
   rubric_criteria: string;
   max_score: string;
   media_url: string;
+  task_category: MeqTaskCategorySlug;
 };
 
 type StageDraft = {
@@ -28,7 +35,13 @@ type StageDraft = {
 };
 
 function blankItemDraft(): ItemDraft {
-  return { question_text: "", rubric_criteria: "", max_score: "10", media_url: "" };
+  return {
+    question_text: "",
+    rubric_criteria: "",
+    max_score: "10",
+    media_url: "",
+    task_category: DEFAULT_MEQ_TASK_CATEGORY,
+  };
 }
 
 export default function CreateMeqTestPage() {
@@ -139,6 +152,9 @@ export default function CreateMeqTestPage() {
           rubric_criteria: r.rubric_criteria,
           max_score: r.max_score,
           media_url: r.media_url,
+          task_category: isMeqTaskCategorySlug(r.task_category)
+            ? r.task_category
+            : DEFAULT_MEQ_TASK_CATEGORY,
         },
       ],
     }));
@@ -350,6 +366,7 @@ export default function CreateMeqTestPage() {
         rubric_criteria: it.rubric_criteria.trim(),
         max_score: parseInt(it.max_score, 10),
         media_urls: it.media_url.trim() ? [it.media_url.trim()] : [],
+        task_category: it.task_category,
       }));
       const { error: itErr } = await supabase.from("meq_stage_items").insert(itemsPayload);
       if (itErr) {
@@ -607,7 +624,9 @@ export default function CreateMeqTestPage() {
                 />
                 <p className="text-xs text-gray-500 max-w-md">
                   Header row (optional): stage, time_limit_minutes, stage_information, question_text,
-                  rubric_criteria, max_score, media_url — or use seven fixed columns in that order.
+                  rubric_criteria, max_score, media_url, task_category — or eight fixed columns in that order.
+                  task_category: number 1–10 or slug (e.g. clinical_reasoning); omit for default (
+                  {DEFAULT_MEQ_TASK_CATEGORY.replace(/_/g, " ")}).
                 </p>
               </div>
             </div>
@@ -660,6 +679,22 @@ export default function CreateMeqTestPage() {
                           Remove prompt
                         </button>
                       ) : null}
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-700">Task category (per prompt)</label>
+                      <select
+                        className="mt-1 w-full border rounded-md px-3 py-2 bg-white"
+                        value={item.task_category}
+                        onChange={(e) =>
+                          updateStageItem(i, ii, "task_category", e.target.value as MeqTaskCategorySlug)
+                        }
+                      >
+                        {MEQ_TASK_CATEGORIES.map((c) => (
+                          <option key={c.slug} value={c.slug}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="text-sm text-gray-700">Media URL (optional)</label>

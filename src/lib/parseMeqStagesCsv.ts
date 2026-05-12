@@ -1,6 +1,4 @@
-/**
- * Minimal RFC-4180-style CSV parse: comma-separated, double-quote escapes.
- */
+import { DEFAULT_MEQ_TASK_CATEGORY, parseMeqTaskCategorySlug } from "@/lib/meqTaskCategories";
 
 export type ParsedStageRow = {
   sequence_order: number;
@@ -10,6 +8,8 @@ export type ParsedStageRow = {
   rubric_criteria: string;
   max_score: string;
   media_url: string;
+  /** MEQ task domain slug; defaults when CSV omits the column. */
+  task_category: string;
 };
 
 export function splitCsvLine(line: string): string[] {
@@ -63,6 +63,9 @@ const HEADER_ALIASES: Record<string, keyof ParsedStageRow | "skip"> = {
   media_url: "media_url",
   media: "media_url",
   url: "media_url",
+  task_category: "task_category",
+  category: "task_category",
+  task: "task_category",
 };
 
 function normHeader(h: string): string {
@@ -117,6 +120,7 @@ export function parseMeqStagesCsv(text: string): { ok: true; rows: ParsedStageRo
     colMap.rubric_criteria = 4;
     colMap.max_score = 5;
     colMap.media_url = 6;
+    colMap.task_category = 7;
   }
 
   const rows: ParsedStageRow[] = [];
@@ -156,6 +160,22 @@ export function parseMeqStagesCsv(text: string): { ok: true; rows: ParsedStageRo
       return { ok: false, error: `Row ${li + 1}: max_score must be between 1 and 100.` };
     }
 
+    const tcRaw = get("task_category");
+    const tcTrim = tcRaw.trim();
+    let task_category: string;
+    if (tcTrim) {
+      const tcParsed = parseMeqTaskCategorySlug(tcTrim);
+      if (!tcParsed) {
+        return {
+          ok: false,
+          error: `Row ${li + 1}: task_category must be 1–10, or a slug such as problem_identification (see MEQ task categories).`,
+        };
+      }
+      task_category = tcParsed;
+    } else {
+      task_category = DEFAULT_MEQ_TASK_CATEGORY;
+    }
+
     rows.push({
       sequence_order,
       time_limit_minutes: String(tlNum),
@@ -164,6 +184,7 @@ export function parseMeqStagesCsv(text: string): { ok: true; rows: ParsedStageRo
       rubric_criteria: rub,
       max_score: String(msNum),
       media_url: get("media_url"),
+      task_category,
     });
   }
 

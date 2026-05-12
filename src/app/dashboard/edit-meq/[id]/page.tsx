@@ -7,6 +7,11 @@ import { supabase } from "@/lib/supabase";
 import { STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
 import { getSessionUserId } from "@/lib/auth/session";
 import { useRoleGate } from "@/hooks/useRoleGate";
+import {
+  MEQ_TASK_CATEGORIES,
+  type MeqTaskCategorySlug,
+  isMeqTaskCategorySlug,
+} from "@/lib/meqTaskCategories";
 
 type StageItemRow = {
   id: string;
@@ -14,6 +19,7 @@ type StageItemRow = {
   question_text: string;
   rubric_criteria: string | null;
   max_score: number | null;
+  task_category: string | null;
 };
 
 type StageRow = {
@@ -61,7 +67,9 @@ export default function EditMeqRubricPage() {
   const [testLabel, setTestLabel] = useState("");
   const [meqTestId, setMeqTestId] = useState<string | null>(null);
   const [stages, setStages] = useState<StageRow[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, { rubric: string; max: string }>>({});
+  const [drafts, setDrafts] = useState<
+    Record<string, { rubric: string; max: string; taskCategory: MeqTaskCategorySlug }>
+  >({});
   const [userId, setUserId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -112,7 +120,7 @@ export default function EditMeqRubricPage() {
     const { data: st, error: se } = await supabase
       .from("meq_test_stages")
       .select(
-        "id, sequence_order, question_text, rubric_criteria, max_score, meq_stage_items ( id, sequence_order, question_text, rubric_criteria, max_score )",
+        "id, sequence_order, question_text, rubric_criteria, max_score, meq_stage_items ( id, sequence_order, question_text, rubric_criteria, max_score, task_category )",
       )
       .eq("meq_test_id", testId)
       .order("sequence_order", { ascending: true });
@@ -125,7 +133,7 @@ export default function EditMeqRubricPage() {
     }
 
     const rows = (st || []) as StageRow[];
-    const d: Record<string, { rubric: string; max: string }> = {};
+    const d: Record<string, { rubric: string; max: string; taskCategory: MeqTaskCategorySlug }> = {};
 
     setStages(rows);
 
@@ -133,15 +141,21 @@ export default function EditMeqRubricPage() {
       const items = normalizeItems(r);
       if (items.length) {
         for (const it of items) {
+          const tc =
+            it.task_category && isMeqTaskCategorySlug(it.task_category)
+              ? it.task_category
+              : "basic_knowledge";
           d[it.id] = {
             rubric: it.rubric_criteria ?? "",
             max: it.max_score != null ? String(it.max_score) : "",
+            taskCategory: tc,
           };
         }
       } else {
         d[r.id] = {
           rubric: r.rubric_criteria ?? "",
           max: r.max_score != null ? String(r.max_score) : "",
+          taskCategory: "basic_knowledge",
         };
       }
     }
@@ -155,12 +169,17 @@ export default function EditMeqRubricPage() {
     void load();
   }, [load]);
 
-  const updateDraft = (id: string, field: "rubric" | "max", value: string) => {
+  const updateDraft = (id: string, field: "rubric" | "max" | "taskCategory", value: string) => {
     setDrafts((prev) => ({
       ...prev,
       [id]: {
-        ...(prev[id] ?? { rubric: "", max: "" }),
-        [field]: value,
+        ...(prev[id] ?? { rubric: "", max: "", taskCategory: "basic_knowledge" }),
+        [field]:
+          field === "taskCategory" && isMeqTaskCategorySlug(value)
+            ? value
+            : field === "taskCategory"
+              ? "basic_knowledge"
+              : value,
       },
     }));
   };
@@ -217,6 +236,7 @@ export default function EditMeqRubricPage() {
         const d = drafts[it.id];
         const newRub = (d?.rubric ?? "").trim();
         const maxNum = parseInt(d?.max ?? "", 10);
+        const taskCategory = d?.taskCategory ?? "basic_knowledge";
         if (!newRub) {
           setError(`Stage ${st.sequence_order}, part ${it.sequence_order}: rubric cannot be empty.`);
           setSaving(false);
@@ -227,18 +247,34 @@ export default function EditMeqRubricPage() {
           setSaving(false);
           return;
         }
-        nextParts.push({ ...it, rubric_criteria: newRub, max_score: maxNum });
+        nextParts.push({
+          ...it,
+          rubric_criteria: newRub,
+          max_score: maxNum,
+          task_category: taskCategory,
+        });
       }
 
       let anyItemMutation = false;
       for (let i = 0; i < items.length; i++) {
         const o = items[i]!;
         const n = nextParts[i]!;
-        if ((o.rubric_criteria ?? "") !== (n.rubric_criteria ?? "") || (o.max_score ?? -1) !== (n.max_score ?? -2)) {
+        const prevCat = o.task_category && isMeqTaskCategorySlug(o.task_category) ? o.task_category : "basic_knowledge";
+        const nextCat =
+          n.task_category && isMeqTaskCategorySlug(n.task_category) ? n.task_category : "basic_knowledge";
+        if (
+          (o.rubric_criteria ?? "") !== (n.rubric_criteria ?? "") ||
+          (o.max_score ?? -1) !== (n.max_score ?? -2) ||
+          prevCat !== nextCat
+        ) {
           anyItemMutation = true;
           const { error: upErr } = await supabase
             .from("meq_stage_items")
-            .update({ rubric_criteria: n.rubric_criteria, max_score: n.max_score })
+            .update({
+              rubric_criteria: n.rubric_criteria,
+              max_score: n.max_score,
+              task_category: nextCat,
+            })
             .eq("id", o.id);
           if (upErr) {
             setError(upErr.message || `Could not save part ${o.sequence_order}.`);
@@ -331,8 +367,8 @@ export default function EditMeqRubricPage() {
         <div className="space-y-8">
           {stages.map((st) => {
             const items = normalizeItems(st);
-            if (!items.length) {
-              const curDraft = drafts[st.id] ?? { rubric: "", max: "" };
+      if (!items.length) {
+        const curDraft = drafts[st.id] ?? { rubric: "", max: "", taskCategory: "basic_knowledge" as const };
               return (
                 <section key={st.id} className="border rounded-lg p-4 space-y-3">
                   <div className="text-sm font-semibold text-blue-900">Stage {st.sequence_order}</div>
@@ -373,6 +409,20 @@ export default function EditMeqRubricPage() {
                       Part {it.sequence_order}
                     </div>
                     <p className="text-sm text-gray-800 whitespace-pre-wrap">{it.question_text}</p>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Task category</label>
+                      <select
+                        className="mt-1 w-full border rounded-md px-3 py-2 max-w-xl bg-white"
+                        value={drafts[it.id]?.taskCategory ?? "basic_knowledge"}
+                        onChange={(e) => updateDraft(it.id, "taskCategory", e.target.value)}
+                      >
+                        {MEQ_TASK_CATEGORIES.map((c) => (
+                          <option key={c.slug} value={c.slug}>
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Rubric</label>
                       <textarea

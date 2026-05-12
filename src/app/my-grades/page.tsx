@@ -8,6 +8,7 @@ type GradedItem = {
   id: string;
   created_at: string;
   human_override_score: number;
+  max_score: number | null;
   ai_rationale_feedback: string | null;
   stage_order: number;
   item_order: number;
@@ -17,8 +18,14 @@ type TestGradeGroup = {
   meq_test_id: string;
   test_display_id: string;
   test_label: string;
+  /** Sum of every authored item's max_score in the exam (whole test). */
+  exam_full_score: number | null;
   items: GradedItem[];
 };
+
+function formatScore(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
 
 function caret(expanded: boolean) {
   return expanded ? (
@@ -63,6 +70,7 @@ export default function MyGrades() {
           ai_rationale_feedback,
           meq_stage_items (
             sequence_order,
+            max_score,
             meq_test_stages!inner(
               sequence_order,
               meq_test_id,
@@ -87,6 +95,7 @@ export default function MyGrades() {
         ai_rationale_feedback: string | null;
         meq_stage_items?: {
           sequence_order: number;
+          max_score: number | null;
           meq_test_stages?: {
             sequence_order: number;
             meq_test_id: string;
@@ -127,6 +136,7 @@ export default function MyGrades() {
             meq_test_id,
             test_display_id,
             test_label: `${t.subject} (${t.course_code})`,
+            exam_full_score: null,
             items: [],
           });
         }
@@ -134,10 +144,36 @@ export default function MyGrades() {
           id: res.id,
           created_at: res.created_at,
           human_override_score: res.human_override_score,
+          max_score: typeof nested.max_score === "number" ? nested.max_score : null,
           ai_rationale_feedback: res.ai_rationale_feedback,
           stage_order: st.sequence_order,
           item_order: nested.sequence_order,
         });
+      }
+
+      const testIds = [...bucketByTest.keys()];
+      const examFullScores = new Map<string, number>();
+      if (testIds.length) {
+        const { data: stageItems } = await supabase
+          .from("meq_test_stages")
+          .select("meq_test_id, meq_stage_items ( max_score )")
+          .in("meq_test_id", testIds);
+        type StageRow = {
+          meq_test_id: string;
+          meq_stage_items: { max_score: number | null }[] | null;
+        };
+        for (const row of (stageItems as StageRow[] | null) || []) {
+          const tid = row.meq_test_id;
+          let add = examFullScores.get(tid) ?? 0;
+          for (const it of row.meq_stage_items ?? []) {
+            add += typeof it.max_score === "number" ? it.max_score : 0;
+          }
+          examFullScores.set(tid, add);
+        }
+      }
+      for (const [tid, total] of examFullScores) {
+        const bucket = bucketByTest.get(tid);
+        if (bucket) bucket.exam_full_score = total > 0 ? total : null;
       }
 
       const list: TestGradeGroup[] = [...bucketByTest.values()].map((g) => ({
@@ -212,6 +248,7 @@ export default function MyGrades() {
                 <th className="py-3 px-3 text-left text-blue-900 font-bold">Test ID</th>
                 <th className="py-3 px-3 text-left text-blue-900 font-bold">Date</th>
                 <th className="py-3 px-3 text-left text-blue-900 font-bold">Score</th>
+                <th className="py-3 px-3 text-left text-blue-900 font-bold whitespace-nowrap">Full score</th>
                 <th className="py-3 px-3 text-left text-blue-900 font-bold">Feedback</th>
               </tr>
             </thead>
@@ -220,7 +257,8 @@ export default function MyGrades() {
                 const isOpen = !!expanded[g.meq_test_id];
                 const latest = Math.max(...g.items.map((x) => new Date(x.created_at).getTime()), 0);
                 const sumScores = g.items.reduce((acc, x) => acc + x.human_override_score, 0);
-                const roundedSum = Number.isInteger(sumScores) ? String(sumScores) : sumScores.toFixed(1);
+                const roundedSum = formatScore(sumScores);
+                const fullExamScore = g.exam_full_score;
                 const parentRow = (
                   <tr
                     key={g.meq_test_id}
@@ -261,6 +299,18 @@ export default function MyGrades() {
                       </span>
                       <span className="block text-xs text-gray-500 mt-1">sum of parts</span>
                     </td>
+                    <td className="py-3 px-3 align-top">
+                      {fullExamScore != null ? (
+                        <>
+                          <span className="inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-900 font-semibold text-sm tabular-nums">
+                            {formatScore(fullExamScore)}
+                          </span>
+                          <span className="block text-xs text-gray-500 mt-1">exam maximum</span>
+                        </>
+                      ) : (
+                        <span className="text-gray-400 text-sm">—</span>
+                      )}
+                    </td>
                     <td className="py-3 px-3 align-top text-sm text-gray-600 italic">
                       {isOpen ? "See each stage below" : "Open the row for stage-by-stage feedback"}
                     </td>
@@ -291,9 +341,18 @@ export default function MyGrades() {
                           })}
                         </td>
                         <td className="py-3 px-3">
-                          <span className="inline-block px-3 py-1 rounded-full bg-blue-200 text-blue-950 font-semibold text-base">
+                          <span className="inline-block px-3 py-1 rounded-full bg-blue-200 text-blue-950 font-semibold text-base tabular-nums">
                             {item.human_override_score}
                           </span>
+                        </td>
+                        <td className="py-3 px-3 tabular-nums text-sm">
+                          {item.max_score != null ? (
+                            <span className="inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-900 font-semibold">
+                              {formatScore(item.max_score)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
                         </td>
                         <td className="py-3 px-3">
                           {item.ai_rationale_feedback ? (
