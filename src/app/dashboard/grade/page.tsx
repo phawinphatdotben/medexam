@@ -5,33 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { GRADING_ROLES } from "@/lib/auth/roles";
 import { useRoleGate } from "@/hooks/useRoleGate";
-import type { GradingHistoryEntry } from "@/lib/grading/meqLockedResponses";
-import { fetchLockedMeqResponsesForScope } from "@/lib/grading/meqLockedResponses";
+import { buildHumanCorrectionLineJson, buildHumanCorrectionTrainingRow } from "@/lib/ai/schemas";
+import {
+  fetchLockedMeqResponsesForScope,
+  type GradingHistoryEntry,
+  type MeqLockedResponseRow,
+} from "@/lib/grading/meqLockedResponses";
 
-interface ResponseRow {
-  id: string;
-  user_id: string;
-  meq_stage_id: string;
-  meq_stage_item_id: string;
-  meq_test_id: string;
-  answer_text: string | null;
-  status: string;
-  human_override_score?: number | null;
-  ai_rationale_feedback?: string | null;
-  grading_history: GradingHistoryEntry[];
-  test_label: string;
-  stage_order: number;
-  item_order: number;
-  stage_information: string | null;
-  created_by: string | null;
-  rubric_criteria: string | null;
-  max_score: number | null;
-  graded_by: string | null;
-  question_text: string | null;
-  course_code: string | null;
-  test_public_code: string | null;
-  test_year: number;
-}
+type ResponseRow = MeqLockedResponseRow;
 
 interface GradeInputState {
   score: string;
@@ -127,7 +108,7 @@ function GradingDashboardInner() {
       setLoading(false);
       return;
     }
-    setResponses(rows as ResponseRow[]);
+    setResponses(rows);
     setLoading(false);
 
     if (!prefilledRef.current) {
@@ -423,30 +404,65 @@ function GradingDashboardInner() {
       }));
       return;
     }
-    const line = {
-      schema_version: 2 as const,
-      recorded_at: new Date().toISOString(),
-      purpose: "human_correction_after_ai" as const,
-      response_id: response.id,
-      meq_stage_id: response.meq_stage_id,
-      meq_stage_item_id: response.meq_stage_item_id,
-      test_label: response.test_label,
-      course_code: response.course_code,
-      stage_order: response.stage_order,
-      item_order: response.item_order,
-      question_text: response.question_text,
-      rubric_criteria: response.rubric_criteria,
-      max_score: response.max_score,
-      student_answer: response.answer_text,
-      human_score: Number(score),
-      staff_feedback: feedback || null,
-    };
+    const stageTimeLimitSeconds =
+      response.stage_time_limit_minutes != null && response.stage_time_limit_minutes > 0
+        ? response.stage_time_limit_minutes * 60
+        : null;
 
-    const { error: insErr } = await supabase.from("meq_ai_training_records").insert({
-      staff_id: graderId,
-      meq_stage_response_id: response.id,
-      line_json: line,
+    const { data: profileSnap } = await supabase.rpc("meq_student_profile_snapshot", {
+      p_user_id: response.user_id,
     });
+
+    const line = buildHumanCorrectionLineJson({
+      responseId: response.id,
+      meqStageId: response.meq_stage_id,
+      meqStageItemId: response.meq_stage_item_id,
+      studentId: response.user_id,
+      meqTestId: response.meq_test_id,
+      courseCode: response.course_code ?? "",
+      taskCategory: response.task_category,
+      assessmentPhase: response.assessment_phase,
+      testLabel: response.test_label,
+      stageOrder: response.stage_order,
+      itemOrder: response.item_order,
+      questionText: response.question_text,
+      rubricCriteria: response.rubric_criteria,
+      maxScore: response.max_score,
+      studentAnswer: response.answer_text,
+      humanScore: Number(score),
+      staffFeedback: feedback || null,
+    });
+
+    const trainingRow = buildHumanCorrectionTrainingRow({
+      staffId: graderId,
+      responseId: response.id,
+      meqStageId: response.meq_stage_id,
+      meqStageItemId: response.meq_stage_item_id,
+      studentId: response.user_id,
+      meqTestId: response.meq_test_id,
+      subject: response.subject,
+      courseCode: response.course_code ?? "",
+      testYear: response.test_year,
+      testFunction: response.test_function,
+      taskCategory: response.task_category,
+      assessmentPhase: response.assessment_phase,
+      responseText: response.answer_text,
+      lockedAt: response.locked_at,
+      stageTimeLimitSeconds,
+      stageOrder: response.stage_order,
+      itemOrder: response.item_order,
+      humanScore: Number(score),
+      humanMaxScore: response.max_score ?? 10,
+      rubricCriteria: response.rubric_criteria,
+      staffFeedback: feedback || null,
+      studentProfileSnapshot:
+        profileSnap && typeof profileSnap === "object"
+          ? (profileSnap as Record<string, unknown>)
+          : { user_id: response.user_id },
+      lineJson: line,
+    });
+
+    const { error: insErr } = await supabase.from("meq_ai_training_records").insert(trainingRow);
     if (insErr) {
       setGradeInputs((prev) => ({
         ...prev,

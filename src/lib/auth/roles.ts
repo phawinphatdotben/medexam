@@ -13,6 +13,9 @@ export const ADMIN_ONLY_ROLES = ["admin"] as const;
 /** Exam review committee page (subset of staff). */
 export const COMMITTEE_PAGE_ROLES = ["admin", "sub_admin", "educator"] as const;
 
+/** Live proctor log for assigned real tests. */
+export const EXAM_MONITOR_ROLES = STAFF_DASHBOARD_ROLES;
+
 export function isRoleAllowed(
   role: string | null | undefined,
   allowed: readonly string[],

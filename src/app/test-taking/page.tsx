@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { BeginRealTestButton } from "@/components/exam/BeginRealTestButton";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
@@ -420,7 +421,8 @@ export default function TestTakingPage() {
         <h1 className="text-3xl font-bold text-blue-800 tracking-tight">Test taking</h1>
         <p className="mt-2 text-sm text-gray-600 max-w-2xl">
           Official exams assigned to you by an administrator. Each item opens only during the scheduling window shown.
-          Overall time caps are configured on the assignment and apply once you tap Begin (see minutes below).
+          When you tap <strong>Begin</strong>, the exam opens in a separate secure window — stay in that window until you
+          submit. Allow pop-ups for this site if your browser blocks the exam window.
         </p>
       </header>
 
@@ -494,12 +496,7 @@ export default function TestTakingPage() {
                       </div>
                       {exam.preview ? <p className="text-gray-700 text-sm line-clamp-2">{exam.preview}</p> : null}
                       <div className="flex justify-end pt-1">
-                        <Link
-                          href={exam.href}
-                          className="bg-orange-800 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-orange-900"
-                        >
-                          Begin
-                        </Link>
+                        <BeginRealTestButton href={exam.href} />
                       </div>
                     </div>
                   ))}

@@ -4,7 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { GRADING_ROLES, isRoleAllowed, STAFF_DASHBOARD_ROLES } from "@/lib/auth/roles";
+import {
+  EXAM_MONITOR_ROLES,
+  GRADING_ROLES,
+  isRoleAllowed,
+  STAFF_DASHBOARD_ROLES,
+} from "@/lib/auth/roles";
+import { isRealExamSessionActive } from "@/lib/exam/realTestLock";
 
 type NavItem = {
   href: string;
@@ -22,7 +28,15 @@ export default function Navbar() {
   const canStaffDashboard = isRoleAllowed(userRole, STAFF_DASHBOARD_ROLES);
   const canGrade = isRoleAllowed(userRole, GRADING_ROLES);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hideForRealExam, setHideForRealExam] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sync = () => setHideForRealExam(isRealExamSessionActive());
+    sync();
+    window.addEventListener("meq-real-exam-session-change", sync);
+    return () => window.removeEventListener("meq-real-exam-session-change", sync);
+  }, []);
 
   const items = useMemo((): NavItem[] => {
     const out: NavItem[] = [];
@@ -38,6 +52,13 @@ export default function Navbar() {
         href: "/dashboard/grade",
         label: "Grade",
         isActive: (p) => p.startsWith("/dashboard/grade"),
+      });
+    }
+    if (isRoleAllowed(userRole, EXAM_MONITOR_ROLES)) {
+      out.push({
+        href: "/dashboard/exam-monitor",
+        label: "Exam monitor",
+        isActive: (p) => p.startsWith("/dashboard/exam-monitor"),
       });
     }
     if (userRole === "sub_admin") {
@@ -153,6 +174,10 @@ export default function Navbar() {
     "xl:hidden inline-flex items-center justify-center rounded-lg border-2 border-blue-900 bg-white p-3 text-blue-900 shadow-sm hover:bg-blue-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 shrink-0 touch-manipulation";
 
   const showDrawer = showNavLinks && mobileOpen;
+
+  if (hideForRealExam) {
+    return null;
+  }
 
   return (
     <nav

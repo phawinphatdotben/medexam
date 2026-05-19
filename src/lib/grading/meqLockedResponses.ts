@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { AssessmentPhase } from "@/lib/ai/types";
+import type { MeqTaskCategorySlug } from "@/lib/meqTaskCategories";
 
 export type GradingHistoryEntry = {
   at: string;
@@ -46,6 +48,12 @@ export interface MeqLockedResponseRow {
   course_code: string | null;
   test_public_code: string | null;
   test_year: number;
+  subject: string;
+  task_category: MeqTaskCategorySlug | string;
+  assessment_phase: AssessmentPhase;
+  test_function: string;
+  locked_at: string | null;
+  stage_time_limit_minutes: number | null;
 }
 
 type FetchCtx = {
@@ -56,21 +64,32 @@ type FetchCtx = {
 
 const SELECT_QUERY = `
   id, user_id, meq_stage_id, meq_stage_item_id,
-  answer_text, status, human_override_score, ai_rationale_feedback, graded_by, grading_history,
+  answer_text, status, human_override_score, ai_rationale_feedback, graded_by, grading_history, locked_at,
   meq_stage_items!inner (
     id,
     sequence_order,
     question_text,
     rubric_criteria,
     max_score,
+    task_category,
     meq_test_stages!inner (
       sequence_order,
       stage_information,
       rubric_criteria,
       max_score,
       question_text,
+      time_limit_minutes,
       meq_test_id,
-      meq_tests!inner( id, created_by, subject, course_code, public_code, test_year )
+      meq_tests!inner(
+        id,
+        created_by,
+        subject,
+        course_code,
+        public_code,
+        test_year,
+        test_function,
+        assessment_purpose
+      )
     )
   )
 `;
@@ -86,18 +105,21 @@ type NestedRow = {
   ai_rationale_feedback: string | null;
   graded_by: string | null;
   grading_history: unknown;
+  locked_at: string | null;
   meq_stage_items: {
     id: string;
     sequence_order: number;
     question_text: string;
     rubric_criteria: string | null;
     max_score: number | null;
+    task_category: string;
     meq_test_stages: {
       sequence_order: number;
       stage_information: string | null;
       rubric_criteria: string | null;
       max_score: number | null;
       question_text: string;
+      time_limit_minutes: number | null;
       meq_test_id: string;
       meq_tests: {
         id: string;
@@ -106,6 +128,8 @@ type NestedRow = {
         course_code: string;
         public_code: string | null;
         test_year: number;
+        test_function: string;
+        assessment_purpose: AssessmentPhase;
       };
     };
   };
@@ -164,6 +188,12 @@ export async function fetchLockedMeqResponsesForScope(
       course_code: t.course_code,
       test_public_code: t.public_code ?? null,
       test_year: t.test_year,
+      subject: t.subject,
+      task_category: r.meq_stage_items.task_category,
+      assessment_phase: t.assessment_purpose,
+      test_function: t.test_function,
+      locked_at: r.locked_at,
+      stage_time_limit_minutes: st.time_limit_minutes,
     };
   });
 

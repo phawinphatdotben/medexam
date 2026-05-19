@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { RealTestCompleteActions } from "@/components/exam/RealTestCompleteActions";
+import { RealTestExamShell } from "@/components/exam/RealTestExamShell";
+import { appendMeqExamInteraction, createInteractionSequence } from "@/lib/ai/interactionLogger";
+import { logExamProctorEvent } from "@/lib/exam/examProctor";
 
 type MeqTest = {
   id: string;
@@ -127,6 +131,9 @@ export default function StudentMeqExamPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const examSessionStartRef = useRef<number | null>(null);
+  const overallAutoSubmitFiredRef = useRef(false);
+  const interactionSeqRef = useRef(createInteractionSequence());
+  const sessionLoggedRef = useRef(false);
   const [sessionTick, setSessionTick] = useState(0);
   const [lastPracticeByStage, setLastPracticeByStage] = useState<Record<string, string>>({});
 
@@ -311,6 +318,32 @@ export default function StudentMeqExamPage() {
 
   const currentStage = stages[currentStageIndex];
   const isCurrentLocked = currentStage ? stageFullyLocked(currentStage, byItemId) : false;
+
+  const interactionCtx = useMemo(
+    () => ({
+      meqTestId: testId,
+      assignmentId,
+      meqStageId: currentStage?.id ?? null,
+      meqStageItemId: currentStage?.itemsSorted[0]?.id ?? null,
+    }),
+    [testId, assignmentId, currentStage?.id, currentStage?.itemsSorted],
+  );
+
+  useEffect(() => {
+    if (!test || complete || loading || sessionLoggedRef.current) return;
+    sessionLoggedRef.current = true;
+    void appendMeqExamInteraction(interactionCtx, "session_started", {
+      test_function: test.test_function,
+    });
+  }, [test, complete, loading, interactionCtx]);
+
+  useEffect(() => {
+    if (!test || !currentStage || complete) return;
+    void appendMeqExamInteraction(interactionCtx, "stage_entered", {
+      stage_index: currentStageIndex,
+      sequence_order: currentStage.sequence_order,
+    });
+  }, [test, currentStage, currentStageIndex, complete, interactionCtx]);
   const stageTimeLimitMinutes = currentStage?.time_limit_minutes ?? null;
 
   const overallLimitMin = test?.time_limit_minutes ?? null;
@@ -443,6 +476,21 @@ export default function StudentMeqExamPage() {
       });
       setSaving(false);
 
+      void appendMeqExamInteraction(
+        {
+          meqTestId: testId,
+          assignmentId,
+          meqStageId: currentStage.id,
+          meqStageItemId: itemsLocal[0]?.id ?? null,
+        },
+        forceSubmit ? "auto_submit_stage" : "stage_locked",
+        {
+          stage_index: currentStageIndex,
+          item_count: itemsLocal.length,
+        },
+        interactionSeqRef.current(),
+      );
+
       if (currentStageIndex === stages.length - 1) {
         setComplete(true);
         return;
@@ -456,14 +504,104 @@ export default function StudentMeqExamPage() {
       currentStageIndex,
       stages.length,
       draftByItem,
+      testId,
+      assignmentId,
     ],
   );
 
   useEffect(() => {
     if (!currentStage || isCurrentLocked || saving) return;
     if (remainingSeconds == null || remainingSeconds > 0) return;
+    if (assignmentId) {
+      void logExamProctorEvent({
+        assignmentId,
+        testKind: "meq",
+        testId,
+        eventType: "auto_submit_stage",
+        detail: { stage_index: currentStageIndex },
+      });
+    }
     void handleSubmitAnswer(true);
-  }, [remainingSeconds, currentStage, isCurrentLocked, saving, handleSubmitAnswer]);
+  }, [
+    remainingSeconds,
+    currentStage,
+    isCurrentLocked,
+    saving,
+    handleSubmitAnswer,
+    assignmentId,
+    testId,
+    currentStageIndex,
+  ]);
+
+  const handleOverallExpiry = useCallback(async () => {
+    if (!userId || stages.length === 0 || complete) return;
+    setSaving(true);
+    setError(null);
+
+    const rows = stages.flatMap((stage) =>
+      stage.itemsSorted.map((it) => ({
+        meq_stage_id: stage.id,
+        meq_stage_item_id: it.id,
+        user_id: userId,
+        answer_text: (draftByItem[it.id] ?? "").trim() || null,
+        status: "locked" as const,
+        human_override_score: null,
+        ai_rationale_feedback: null,
+        graded_by: null,
+        graded_at: null,
+        grading_history: [] as unknown[],
+      })),
+    );
+
+    const toUpsert = rows.filter((r) => byItemId[r.meq_stage_item_id]?.status !== "locked");
+    if (toUpsert.length > 0) {
+      const { error: saveError } = await supabase.from("meq_stage_responses").upsert(toUpsert, {
+        onConflict: "user_id,meq_stage_item_id",
+      });
+      if (saveError) {
+        setError("Overall time elapsed but answers could not be saved. Contact your instructor.");
+        setSaving(false);
+        return;
+      }
+    }
+
+    setByItemId((prev) => {
+      const next = { ...prev };
+      for (const r of rows) {
+        next[r.meq_stage_item_id] = {
+          meq_stage_id: r.meq_stage_id,
+          meq_stage_item_id: r.meq_stage_item_id,
+          answer_text: r.answer_text,
+          status: "locked",
+        };
+      }
+      return next;
+    });
+    if (assignmentId) {
+      void logExamProctorEvent({
+        assignmentId,
+        testKind: "meq",
+        testId,
+        eventType: "auto_submit_overall",
+      });
+    }
+    void appendMeqExamInteraction(
+      { meqTestId: testId, assignmentId },
+      "auto_submit_overall",
+      {},
+      interactionSeqRef.current(),
+    );
+    setComplete(true);
+    setSaving(false);
+  }, [userId, stages, complete, draftByItem, byItemId, assignmentId, testId]);
+
+  useEffect(() => {
+    if (complete || !test || overallRemainingSeconds == null) return;
+    if (overallRemainingSeconds > 0) return;
+    if (overallAutoSubmitFiredRef.current) return;
+    overallAutoSubmitFiredRef.current = true;
+    void handleOverallExpiry();
+  }, [overallRemainingSeconds, complete, test, handleOverallExpiry]);
 
   const isPractice = test?.test_function === "practice";
 
@@ -542,8 +680,24 @@ export default function StudentMeqExamPage() {
     setSaving(false);
   };
 
+  const secureExam = !!assignmentId;
+  const examShellTitle = test?.subject ? `${test.subject} (MEQ)` : "MEQ exam";
+  const isRealTest = test?.test_function !== "practice";
+
+  const wrapExam = (content: ReactNode) => (
+    <RealTestExamShell
+      kind="meq"
+      testId={testId}
+      secureExam={secureExam}
+      finished={complete}
+      title={examShellTitle}
+    >
+      {content}
+    </RealTestExamShell>
+  );
+
   if (loading) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="flex flex-col items-center">
           <svg
@@ -557,22 +711,22 @@ export default function StudentMeqExamPage() {
           </svg>
           <span className="text-blue-800 text-lg font-medium">Loading exam...</span>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (error && !test) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="bg-red-50 text-red-700 border border-red-300 px-6 py-4 rounded-lg text-lg font-semibold shadow">
           {error}
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (complete) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex flex-col items-center justify-center bg-white">
         <div className="bg-green-50 border border-green-300 rounded-lg shadow p-8 max-w-md text-center">
           <h2 className="text-2xl font-bold text-green-800 mb-2">Congratulations!</h2>
@@ -600,20 +754,23 @@ export default function StudentMeqExamPage() {
               </button>
             </div>
           ) : (
-            <p className="mt-6 text-sm text-gray-600">
-              This is a formal exam: one submission only — retake is not available.
-            </p>
+            <>
+              <p className="mt-6 text-sm text-gray-600">
+                This is a formal exam: one submission only — retake is not available.
+              </p>
+              <RealTestCompleteActions isRealTest={isRealTest} />
+            </>
           )}
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (!test || !currentStage) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex items-center justify-center">
         <span className="text-gray-600">No stages configured for this exam.</span>
-      </div>
+      </div>,
     );
   }
 
@@ -622,7 +779,7 @@ export default function StudentMeqExamPage() {
   const practicePartsDecoded =
     practiceSnapRaw && items.length ? deserializePracticePrev(practiceSnapRaw, items) : null;
 
-  return (
+  return wrapExam(
     <div className="min-h-screen bg-white flex flex-col">
       <header className="w-full border-b border-gray-200 px-6 py-6 shadow-sm">
         <h1 className="text-3xl font-bold text-blue-800 tracking-tight">
@@ -871,6 +1028,6 @@ export default function StudentMeqExamPage() {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
   );
 }

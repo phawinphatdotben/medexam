@@ -226,6 +226,9 @@ export default function AdminRoleManagementPage() {
         <a href="/dashboard/admin/audit" className="text-sm text-blue-700 hover:underline block mb-2">
           Rubric &amp; AI training audit log →
         </a>
+        <a href="/dashboard/admin/ai-pipeline" className="text-sm text-blue-700 hover:underline block mb-2">
+          AI data pipeline (formative ground truth) →
+        </a>
         <h1 className="text-3xl font-bold text-black tracking-tight">
           User Role Management
         </h1>

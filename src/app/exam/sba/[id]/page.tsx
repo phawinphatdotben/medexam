@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { RealTestCompleteActions } from "@/components/exam/RealTestCompleteActions";
+import { RealTestExamShell } from "@/components/exam/RealTestExamShell";
+import { logExamProctorEvent } from "@/lib/exam/examProctor";
 
 type SbaTest = {
   id: string;
@@ -43,6 +46,7 @@ export default function StudentSbaExamPage() {
   const [done, setDone] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const sessionStartRef = useRef<number | null>(null);
+  const overallAutoSubmitFiredRef = useRef(false);
   const [sessionTick, setSessionTick] = useState(0);
   const [lastPracticeByQuestion, setLastPracticeByQuestion] = useState<Record<string, string>>({});
   const [overallExpired, setOverallExpired] = useState(false);
@@ -167,12 +171,15 @@ export default function StudentSbaExamPage() {
     setAnswers((prev) => ({ ...prev, [qid]: optionId }));
   };
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(async (opts?: { forceTimer?: boolean }) => {
     if (!userId) {
       setError("You are not signed in.");
       return;
     }
-    const allowIncomplete = overallExpired && test?.time_limit_minutes != null && test.time_limit_minutes > 0;
+    const timedOut =
+      opts?.forceTimer ||
+      (overallExpired && test?.time_limit_minutes != null && test.time_limit_minutes > 0);
+    const allowIncomplete = timedOut;
     if (!allowIncomplete) {
       for (const q of questions) {
         if (!answers[q.id]?.trim()) {
@@ -180,7 +187,7 @@ export default function StudentSbaExamPage() {
           return;
         }
       }
-    } else {
+    } else if (!opts?.forceTimer) {
       const anyAnswered = questions.some((q) => answers[q.id]?.trim());
       if (!anyAnswered) {
         setError("Overall time elapsed — choose at least one answer before submitting.");
@@ -208,17 +215,27 @@ export default function StudentSbaExamPage() {
       is_correct: null;
     }[];
 
-    const { error: insErr } = await supabase.from("sba_question_responses").upsert(rows, {
-      onConflict: "user_id,sba_test_question_id",
-    });
-    if (insErr) {
-      setError("Failed to save answers. Try again.");
-      setSaving(false);
-      return;
+    if (rows.length > 0) {
+      const { error: insErr } = await supabase.from("sba_question_responses").upsert(rows, {
+        onConflict: "user_id,sba_test_question_id",
+      });
+      if (insErr) {
+        setError("Failed to save answers. Try again.");
+        setSaving(false);
+        return;
+      }
+    }
+    if (opts?.forceTimer && assignmentId) {
+      void logExamProctorEvent({
+        assignmentId,
+        testKind: "sba",
+        testId,
+        eventType: "auto_submit_overall",
+      });
     }
     setDone(true);
     setSaving(false);
-  }, [answers, questions, userId, overallExpired, test]);
+  }, [answers, questions, userId, overallExpired, test, assignmentId, testId]);
 
   const isPractice = test?.test_function === "practice";
 
@@ -319,29 +336,52 @@ export default function StudentSbaExamPage() {
   }, [overallRemainingSeconds, done, test, overallLimitMin]);
 
   useEffect(() => {
+    if (done || !test || overallRemainingSeconds == null || overallRemainingSeconds > 0) return;
+    if (overallAutoSubmitFiredRef.current) return;
+    overallAutoSubmitFiredRef.current = true;
+    void submit({ forceTimer: true });
+  }, [overallRemainingSeconds, done, test, submit]);
+
+  useEffect(() => {
     if (done || !test) return;
     const id = window.setInterval(() => setSessionTick((tick) => tick + 1), 1000);
     return () => window.clearInterval(id);
   }, [done, test]);
 
+  const secureExam = !!assignmentId;
+  const examShellTitle = test?.subject ? `${test.subject} (SBA)` : "SBA exam";
+  const isRealTest = test?.test_function !== "practice";
+
+  const wrapExam = (content: ReactNode) => (
+    <RealTestExamShell
+      kind="sba"
+      testId={testId}
+      secureExam={secureExam}
+      finished={done}
+      title={examShellTitle}
+    >
+      {content}
+    </RealTestExamShell>
+  );
+
   if (loading) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex items-center justify-center bg-white">
         <span className="text-blue-800 text-lg">Loading test…</span>
-      </div>
+      </div>,
     );
   }
   if (error && !test) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex items-center justify-center bg-white p-4">
         <div className="bg-red-50 text-red-700 border border-red-200 rounded-lg px-6 py-4 max-w-md text-center">
           {error}
         </div>
-      </div>
+      </div>,
     );
   }
   if (done) {
-    return (
+    return wrapExam(
       <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4">
         <div className="bg-green-50 border border-green-200 rounded-lg shadow p-8 max-w-md text-center">
           <h1 className="text-2xl font-bold text-green-800">Submitted</h1>
@@ -356,15 +396,18 @@ export default function StudentSbaExamPage() {
               {saving ? "Resetting..." : "Retake (practice) — see last choices beside questions"}
             </button>
           ) : (
-            <p className="mt-4 text-sm text-gray-600">Formal exam: one submission — retake is not available.</p>
+            <>
+              <p className="mt-4 text-sm text-gray-600">Formal exam: one submission — retake is not available.</p>
+              <RealTestCompleteActions isRealTest={isRealTest} />
+            </>
           )}
         </div>
-      </div>
+      </div>,
     );
   }
   if (!test) return null;
 
-  return (
+  return wrapExam(
     <div className="min-h-screen bg-white flex flex-col pb-16">
       <header className="border-b border-gray-200 px-6 py-6">
         <h1 className="text-2xl font-bold text-blue-900 flex flex-wrap items-center gap-2">
@@ -454,7 +497,7 @@ export default function StudentSbaExamPage() {
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => void submit()}
+              onClick={() => void submit(undefined)}
               disabled={saving}
               className="bg-blue-800 text-white font-semibold px-8 py-3 rounded-lg shadow hover:bg-blue-900 disabled:opacity-50"
             >
@@ -463,6 +506,6 @@ export default function StudentSbaExamPage() {
           </div>
         )}
       </main>
-    </div>
+    </div>,
   );
 }

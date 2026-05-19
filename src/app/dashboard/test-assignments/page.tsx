@@ -655,7 +655,15 @@ export default function TestAssignmentsPage() {
           <Link href="/dashboard" className="text-blue-600 text-sm hover:underline">
             ← Staff dashboard
           </Link>
-          <h1 className="text-3xl font-bold text-gray-900 mt-2">Test season assignments</h1>
+          <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
+            <h1 className="text-3xl font-bold text-gray-900">Test season assignments</h1>
+            <Link
+              href="/dashboard/exam-monitor"
+              className="text-sm font-semibold text-orange-900 bg-orange-100 px-3 py-1.5 rounded-lg hover:bg-orange-200 shrink-0"
+            >
+              Live exam monitor →
+            </Link>
+          </div>
           <p className="text-gray-600 text-sm mt-1">
             Build reusable <strong>test groups</strong> (pick exams by code, year, and track — pending or approved) and{" "}
             <strong>student groups</strong>, then create scheduling rows with <strong>required window</strong>,{" "}
